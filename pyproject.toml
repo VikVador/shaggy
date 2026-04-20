@@ -1,0 +1,54 @@
+[project]
+name = "shaggy"
+version = "0.0.1"
+description = "Autoencoders in PyTorch"
+readme = "README.md"
+license = "MIT"
+
+dependencies = [
+  "azula==0.7.0",
+  "einops==0.8.0",
+  "numpy==1.26.3",
+  "torch==2.5.1",
+  "tqdm==4.66.4",
+  "zarr==3.1.2",
+]
+
+[project.optional-dependencies]
+all = [
+  "jupyterlab==4.2.2",
+  "ipykernel==6.29.5",
+  "matplotlib==3.9.0",
+  "pre-commit==3.7.1",
+  "pytest==8.2.2",
+  "ruff==0.4.8",
+  "torchvision>=0.20",
+]
+
+[tool.ruff]
+extend-include = ["*.ipynb"]
+line-length = 99
+
+[tool.ruff.lint]
+extend-select = ["ANN", "B", "I", "UP", "W"]
+ignore = ["ANN002", "ANN003", "ANN401", "E731", "E741"]
+preview = true
+
+[tool.ruff.lint.extend-per-file-ignores]
+"__init__.py" = ["F401"]
+"test_*.py" = ["F403", "F405"]
+"*.ipynb" = ["B007"]
+
+[tool.ruff.lint.isort]
+lines-between-types = 1
+relative-imports-order = "closest-to-furthest"
+section-order = ["future", "third-party", "first-party", "local-folder"]
+
+[tool.ruff.format]
+preview = true
+
+[tool.setuptools.dynamic]
+version = {attr = "shaggy.__version__"}
+
+[tool.setuptools.packages.find]
+include = ["shaggy*"]
