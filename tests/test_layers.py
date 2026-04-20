@@ -4,7 +4,7 @@ import math
 import pytest
 import torch
 
-from shaggy.shaggy.layers import ConvNd, LayerNorm, Patchify, Unpatchify
+from shaggy.layers import ConvNd, LayerNorm, Patchify, Unpatchify
 
 
 @pytest.mark.parametrize("spatial", [1, 2, 3])

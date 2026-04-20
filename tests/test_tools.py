@@ -5,8 +5,8 @@ import torch
 from omegaconf import OmegaConf
 from pathlib import Path
 
-from shaggy.shaggy.models.cae import create_ConvAE
-from shaggy.shaggy.tools import load, save
+from shaggy.models.cae import create_ConvAE
+from shaggy.tools import load, save
 
 MINIMAL_CONFIG = {
     "in_channels": 2,

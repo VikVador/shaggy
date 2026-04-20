@@ -15,13 +15,13 @@ from azula.nn.utils import get_module_dtype
 from torch import Tensor
 from typing import Optional, Sequence, Tuple, Union
 
-from shaggy.shaggy.layers import (
+from shaggy.layers import (
     ConvNd,
     LayerNorm,
     Patchify,
     Unpatchify,
 )
-from shaggy.shaggy.utils import checkpoint
+from shaggy.utils import checkpoint
 
 
 class Residual(nn.Sequential):

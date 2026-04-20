@@ -11,8 +11,8 @@ from omegaconf import DictConfig, OmegaConf
 from pathlib import Path
 from typing import Union
 
-from shaggy.shaggy.models.cae import ConvAE, create_ConvAE
-from shaggy.shaggy.utils import skip_init
+from shaggy.models.cae import ConvAE, create_ConvAE
+from shaggy.utils import skip_init
 
 
 def save(model: ConvAE, config: DictConfig, path: Union[str, Path]) -> None:

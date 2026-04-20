@@ -4,7 +4,7 @@ import pytest
 import torch
 import torch.nn as nn
 
-from shaggy.shaggy.loss import AELoss
+from shaggy.loss import AELoss
 
 
 def test_aeloss_perfect_reconstruction() -> None:

@@ -5,7 +5,7 @@ import torch
 
 from pathlib import Path
 
-from shaggy.shaggy.models.cae import create_ConvAE
+from shaggy.models.cae import create_ConvAE
 
 param_combinations = [
     (1, 3, [16], 2, "softclip", 0.5),
