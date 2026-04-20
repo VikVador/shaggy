@@ -1,9 +1,7 @@
 <img src="assets/header.gif" width="100%">
 <hr style="color:#808080;">
-<p align="center"><b>S H A G G Y</b></p>
-<hr style="color:#808080;">
 
-Shaggy is a lightweight package that implements autoencoder models in [PyTorch](https://pytorch.org). It provides modular encoder–decoder architectures, the [SOAP](https://arxiv.org/abs/2409.11321) optimizer, gradient-checkpointing utilities, and save/load tools. Basically everything needed to go from raw data to a trained latent representation with minimal boilerplate.
+**Shaggy** is a lightweight package that implements autoencoder models in [PyTorch](https://pytorch.org). It provides modular encoder–decoder architectures, the [SOAP](https://arxiv.org/abs/2409.11321) optimizer, gradient-checkpointing utilities, and save/load tools. Basically everything needed to go from raw data to a trained latent representation with minimal boilerplate.
 
 <hr style="color:#808080;">
 <p align="center"><b>C O N T R I B U T O R S</b></p>
