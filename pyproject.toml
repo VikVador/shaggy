@@ -6,7 +6,7 @@ readme = "README.md"
 license = "MIT"
 
 dependencies = [
-  "azula==0.7.0",
+  "azula==0.11.1",
   "einops==0.8.0",
   "numpy==1.26.3",
   "torch==2.5.1",
