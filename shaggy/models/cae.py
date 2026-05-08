@@ -445,6 +445,25 @@ class ConvAE(nn.Module):
 
         return tuple(z.shape[1:])
 
+    def compression_info(self, input_shape: Sequence[int]) -> Tuple[Tuple[int, ...], int]:
+        r"""Returns the bottleneck latent shape and compression factor for a given input shape.
+
+        Arguments:
+            input_shape: Full input dimensions (C, L_1, ..., L_N).
+
+        Returns:
+            latent: Latent tensor shape (C_z, L_1', ..., L_N').
+            factor: Integer compression factor = prod(input_shape) // prod(latent).
+        """
+
+        import math
+
+        _, *resolution = input_shape
+        lat = self.latent_shape(resolution)
+        factor = math.prod(input_shape) // math.prod(lat)
+
+        return lat, factor
+
     def encode(self, x: Tensor) -> Tensor:
         r"""Encodes an image tensor into a latent representation.
 
