@@ -352,9 +352,12 @@ class SOAP(torch.optim.Optimizer):
                 Q.append(None)
             else:
                 m32 = m.to(dtype=torch.float32)
-                _, q32 = torch.linalg.eigh(
-                    m32 + 1e-12 * torch.eye(*m32.shape, dtype=m32.dtype, device=m32.device)
-                )
+                try:
+                    _, q32 = torch.linalg.eigh(
+                        m32 + 1e-6 * torch.eye(*m32.shape, dtype=m32.dtype, device=m32.device)
+                    )
+                except torch.linalg.LinAlgError:
+                    q32 = torch.eye(*m32.shape, dtype=m32.dtype, device=m32.device)
                 q = q32.to(dtype=m.dtype)
                 Q.append(torch.fliplr(q))
 
