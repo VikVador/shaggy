@@ -26,8 +26,8 @@ all = [
 ]
 
 [tool.ruff]
-extend-include = ["*.ipynb"]
 line-length = 99
+exclude = ["notebook/"]
 
 [tool.ruff.lint]
 extend-select = ["ANN", "B", "I", "UP", "W"]
@@ -35,9 +35,8 @@ ignore = ["ANN002", "ANN003", "ANN401", "E731", "E741"]
 preview = true
 
 [tool.ruff.lint.extend-per-file-ignores]
-"__init__.py" = ["F401"]
+"__init__.py" = ["F401", "F403"]
 "test_*.py" = ["F403", "F405"]
-"*.ipynb" = ["B007"]
 
 [tool.ruff.lint.isort]
 lines-between-types = 1
