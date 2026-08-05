@@ -3,14 +3,14 @@ name = "shaggy"
 version = "0.0.1"
 description = "Autoencoders in PyTorch"
 readme = "README.md"
-license = "MIT"
+license = {text = "MIT"}
 
 dependencies = [
   "azula==0.11.1",
   "einops==0.8.0",
-  "numpy==1.26.3",
+  "numpy==2.4.6",
   "omegaconf==2.3.1",
-  "torch==2.5.1",
+  "torch==2.12.0",
   "tqdm==4.66.4",
   "zarr==3.1.2",
 ]
@@ -23,7 +23,7 @@ all = [
   "pre-commit==3.7.1",
   "pytest==8.2.2",
   "ruff==0.4.8",
-  "torchvision>=0.20",
+  "torchvision>=0.27",
 ]
 
 [tool.ruff]

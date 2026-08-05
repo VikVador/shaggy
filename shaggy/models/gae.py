@@ -9,15 +9,13 @@ Architecture inspired by the hierarchical mesh graph neural networks used in
 Unlike a :class:`shaggy.models.cae.ConvAE`, which compresses a regular grid tensor
 (B, C, L_1, ..., L_N) by striding convolutions, a :class:`GraphAE` compresses it by
 routing grid nodes through a hierarchy of coarser and coarser mesh graphs (built by
-:func:`shaggy.tools.build_mesh`) with graph neural network message passing. The
+:func:`shaggy.models.tools.build_mesh`) with graph neural network message passing. The
 mesh geometry is fixed at construction time: a :class:`GraphAE` is only valid for
 the input resolution it was built for.
 """
 
 __all__ = [
     "Mesh",
-    "GraphResBlock",
-    "GraphPool",
     "GraphEncoder",
     "GraphDecoder",
     "GraphAE",
@@ -25,15 +23,13 @@ __all__ = [
 ]
 
 import math
-import torch
 import torch.nn as nn
 
-from azula.nn.utils import get_module_dtype
 from torch import Tensor
 from typing import List, NamedTuple, Optional, Sequence, Tuple
 
-from shaggy.layers import LayerNorm
-from shaggy.utils import checkpoint
+from shaggy.layers import GraphPool, GraphResBlock
+from shaggy.models.ae import AutoEncoder
 
 
 class Mesh(NamedTuple):
@@ -41,7 +37,7 @@ class Mesh(NamedTuple):
 
     Level 0 is the input grid itself (one node per pixel/voxel); levels 1 to L are
     increasingly coarse mesh levels, L being :attr:`num_levels`. Built by
-    :func:`shaggy.tools.build_mesh`.
+    :func:`shaggy.models.tools.build_mesh`.
 
     Attributes:
         resolution: Shape of the input grid (L_1, ..., L_N).
@@ -67,178 +63,6 @@ class Mesh(NamedTuple):
     @property
     def num_levels(self) -> int:
         return len(self.pos) - 1
-
-
-def _in_degree(edge_index: Tensor, num_nodes: int) -> Tensor:
-    r"""Counts incoming edges per node, for mean (rather than sum) aggregation.
-
-    Sum aggregation over a K-means cluster hierarchy would let a target node's output
-    magnitude be dominated by its (input-independent) cluster size rather than by the
-    actual source features, which stalls training. Dividing by in-degree fixes this.
-
-    Arguments:
-        edge_index: Edge index, with shape (2, E).
-        num_nodes: Number of target nodes N.
-
-    Returns:
-        degree: In-degree per node, clamped to >= 1, with shape (1, N, 1).
-    """
-    degree = torch.zeros(num_nodes)
-    degree.index_add_(0, edge_index[1], torch.ones(edge_index.shape[1]))
-    return degree.clamp(min=1).view(1, num_nodes, 1)
-
-
-class GraphResBlock(nn.Module):
-    r"""Creates a residual message-passing block operating on a single mesh level.
-
-    Analogous to :class:`shaggy.models.cae.ResBlock`, but the spatial convolution is
-    replaced by an edge-conditioned message passing step (an Interaction Network,
-    following Njord/GraphCast-style GNNs) over a fixed graph.
-
-    Arguments:
-        channels: Number of node features C.
-        edge_index: Intra-level edge index, with shape (2, E).
-        num_nodes: Number of nodes N at this level.
-        ffn_factor: Channel expansion factor in the MLPs.
-        dropout: Dropout rate in [0, 1].
-        checkpointing: Whether to use gradient checkpointing or not.
-    """
-
-    def __init__(
-        self,
-        channels: int,
-        edge_index: Tensor,
-        num_nodes: int,
-        ffn_factor: int = 1,
-        dropout: Optional[float] = None,
-        checkpointing: bool = False,
-    ) -> None:
-        super().__init__()
-
-        self.checkpointing = checkpointing
-
-        self.register_buffer("edge_index", edge_index)
-        self.register_buffer("degree", _in_degree(edge_index, num_nodes))
-
-        self.norm = LayerNorm(dim=-1)
-
-        self.edge_mlp = nn.Sequential(
-            nn.Linear(2 * channels, ffn_factor * channels),
-            nn.SiLU(),
-            nn.Linear(ffn_factor * channels, channels),
-        )
-
-        self.node_mlp = nn.Sequential(
-            nn.Linear(2 * channels, ffn_factor * channels),
-            nn.SiLU(),
-            nn.Identity() if dropout is None else nn.Dropout(dropout),
-            nn.Linear(ffn_factor * channels, channels),
-        )
-
-        self.node_mlp[-1].weight.data.mul_(1e-2)
-
-    def _forward(self, h: Tensor) -> Tensor:
-        r"""Applies layer norm, edge update, node aggregation/update, and residual addition.
-
-        Arguments:
-            h: Node features, with shape (B, N, C).
-
-        Returns:
-            Output node features, with shape (B, N, C).
-        """
-
-        y = self.norm(h)
-
-        src, dst = self.edge_index
-
-        edges = self.edge_mlp(torch.cat([y[:, src], y[:, dst]], dim=-1))
-
-        agg = y.new_zeros(y.shape[0], y.shape[1], edges.shape[-1])
-        agg = agg.index_add_(1, dst, edges) / self.degree
-
-        out = self.node_mlp(torch.cat([y, agg], dim=-1))
-
-        return h + out
-
-    def forward(self, h: Tensor) -> Tensor:
-        if self.checkpointing:
-            return checkpoint(self._forward, reentrant=not self.training)(h)
-        else:
-            return self._forward(h)
-
-
-class GraphPool(nn.Module):
-    r"""Creates a message-passing layer that maps node features from a source level
-    onto a (generally smaller or larger) target level via directed edges.
-
-    Used both for pooling (grid -> mesh, fine mesh -> coarse mesh) in the encoder
-    and unpooling (coarse mesh -> fine mesh, mesh -> grid) in the decoder; only the
-    direction of the supplied edges and the channel counts differ.
-
-    Since source and target levels generally have different node counts, there is no
-    true identity map to fall back on. Instead, a linear skip connection (projected
-    through the same edges) plays the role GraphResBlock's "h +" residual plays: it
-    carries a healthy, un-shrunk gradient path, while the MLP learns a small correction
-    on top of it (identity_init shrinks the MLP's output layer, not the skip). Without
-    this skip, stacking several GraphPools in a row (as GraphEncoder/GraphDecoder do,
-    with no residual connection between them) vanishes gradients by several orders of
-    magnitude before they reach the earliest layers.
-
-    Arguments:
-        in_channels: Number of source node features C_i.
-        out_channels: Number of target node features C_o.
-        edge_index: Source-to-target edge index, with shape (2, E).
-        num_targets: Number of nodes N_o in the target level.
-        ffn_factor: Channel expansion factor in the MLP.
-        identity_init: Initialize the MLP's output layer with small residual noise (scale 1e-2).
-    """
-
-    def __init__(
-        self,
-        in_channels: int,
-        out_channels: int,
-        edge_index: Tensor,
-        num_targets: int,
-        ffn_factor: int = 1,
-        identity_init: bool = True,
-    ) -> None:
-        super().__init__()
-
-        self.register_buffer("edge_index", edge_index)
-        self.register_buffer("degree", _in_degree(edge_index, num_targets))
-
-        self.num_targets = num_targets
-
-        self.skip = nn.Linear(in_channels, out_channels, bias=False)
-
-        self.mlp = nn.Sequential(
-            nn.Linear(in_channels, ffn_factor * out_channels),
-            nn.SiLU(),
-            nn.Linear(ffn_factor * out_channels, out_channels),
-        )
-
-        if identity_init:
-            self.mlp[-1].weight.data.mul_(1e-2)
-            nn.init.zeros_(self.mlp[-1].bias)
-
-    def forward(self, h: Tensor) -> Tensor:
-        r"""
-        Arguments:
-            h: Source node features, with shape (B, N_i, C_i).
-
-        Returns:
-            Target node features, with shape (B, N_o, C_o).
-        """
-
-        src, dst = self.edge_index
-
-        source = h[:, src]
-        messages = self.skip(source) + self.mlp(source)
-
-        out = h.new_zeros(h.shape[0], self.num_targets, messages.shape[-1])
-        out = out.index_add_(1, dst, messages) / self.degree
-
-        return out
 
 
 class GraphEncoder(nn.Module):
@@ -461,7 +285,7 @@ class GraphDecoder(nn.Module):
         return x
 
 
-class GraphAE(nn.Module):
+class GraphAE(AutoEncoder):
     r"""Creates a graph auto-encoder module.
 
     Arguments:
@@ -469,50 +293,7 @@ class GraphAE(nn.Module):
         decoder: Decoder module.
         saturation: Saturation function applied to latent codes.
         saturation_bound: Bound used by the saturation function.
-        noise: Standard deviation of Gaussian noise added during decoding.
     """
-
-    def __init__(
-        self,
-        encoder: nn.Module,
-        decoder: nn.Module,
-        saturation: Optional[str] = "softclip2",
-        saturation_bound: float = 5.0,
-        noise: float = 0.0,
-    ) -> None:
-        super().__init__()
-
-        self.encoder = encoder
-        self.decoder = decoder
-
-        self.saturation = saturation
-        self.saturation_bound = saturation_bound
-        self.noise = noise
-
-    def saturate(self, x: Tensor) -> Tensor:
-        r"""Applies the configured saturation function to a tensor.
-
-        Arguments:
-            x: Input tensor.
-
-        Returns:
-            Saturated tensor, with the same shape as x.
-        """
-
-        if self.saturation is None:
-            return x
-        elif self.saturation == "softclip":
-            return x / (1 + abs(x) / self.saturation_bound)
-        elif self.saturation == "softclip2":
-            return x * torch.rsqrt(1 + torch.square(x / self.saturation_bound))
-        elif self.saturation == "tanh":
-            return torch.tanh(x / self.saturation_bound) * self.saturation_bound
-        elif self.saturation == "asinh":
-            return torch.arcsinh(x)
-        elif self.saturation == "rmsnorm":
-            return x * torch.rsqrt(torch.mean(torch.square(x), dim=-1, keepdim=True) + 1e-5)
-        else:
-            raise ValueError(f"unknown saturation '{self.saturation}'")
 
     def latent_shape(self) -> Tuple[int, int]:
         r"""Returns the latent node-feature shape for this model's (fixed) mesh.
@@ -545,64 +326,12 @@ class GraphAE(nn.Module):
 
         return lat, factor
 
-    def encode(self, x: Tensor) -> Tensor:
-        r"""Encodes an image tensor into a latent representation.
-
-        Arguments:
-            x: Input image, with shape (B, C_i, L_1, ..., L_N).
-
-        Returns:
-            z: Latent node features, with shape (B, M, C_z).
-        """
-
-        dtype = get_module_dtype(self.encoder)
-        z = self.encoder(x.to(dtype))
-        z = self.saturate(z)
-
-        return z.to(x.dtype)
-
-    def decode(self, z: Tensor) -> Tensor:
-        r"""Decodes a latent code back into an image tensor.
-
-        Arguments:
-            z: Latent node features, with shape (B, M, C_z).
-
-        Returns:
-            x: Reconstructed image, with shape (B, C_o, L_1, ..., L_N).
-        """
-
-        dtype = get_module_dtype(self.decoder)
-
-        if self.noise > 0:
-            z = z + self.noise * torch.randn_like(z)
-
-        x = self.decoder(z.to(dtype))
-
-        return x.to(z.dtype)
-
-    def forward(self, x: Tensor) -> Tuple[Tensor, Tensor]:
-        r"""Encodes and reconstructs an image tensor.
-
-        Arguments:
-            x: Input image, with shape (B, C_i, L_1, ..., L_N).
-
-        Returns:
-            z: Latent node features, with shape (B, M, C_z).
-            y: Reconstructed image, with shape (B, C_o, L_1, ..., L_N).
-        """
-
-        z = self.encode(x)
-        y = self.decode(z)
-
-        return z, y
-
 
 def create_GraphAE(
     in_channels: int,
     out_channels: int,
     lat_channels: int,
     mesh: Mesh,
-    noise_level: float = 0.0,
     saturation_bound: float = 5.0,
     saturation: Optional[str] = "softclip2",
     **kwargs,
@@ -613,9 +342,8 @@ def create_GraphAE(
         in_channels: Number of input channels.
         out_channels: Number of output channels.
         lat_channels: Number of latent channels.
-        mesh: Hierarchical mesh graph built by shaggy.tools.build_mesh, with
+        mesh: Hierarchical mesh graph built by shaggy.models.tools.build_mesh, with
               mesh.num_levels == len(hid_channels).
-        noise_level: Standard deviation of Gaussian noise injected at decode time.
         saturation_bound: Bound used by the saturation function.
         saturation: Saturation function applied to latent codes.
         **kwargs: Forwarded to both GraphEncoder and GraphDecoder.
@@ -643,5 +371,4 @@ def create_GraphAE(
         decoder,
         saturation=saturation,
         saturation_bound=saturation_bound,
-        noise=noise_level,
     )

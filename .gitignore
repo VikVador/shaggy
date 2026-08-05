@@ -8,10 +8,7 @@
 *.sh
 *.png
 cluster/*
-data/*
-
-# Scripts
-*.sh
+data/mesh/*
 
 ##########
 # Python #

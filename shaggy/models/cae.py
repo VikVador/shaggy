@@ -11,84 +11,16 @@ import math
 import torch
 import torch.nn as nn
 
-from azula.nn.utils import get_module_dtype
 from torch import Tensor
 from typing import Optional, Sequence, Tuple, Union
 
 from shaggy.layers import (
     ConvNd,
-    LayerNorm,
     Patchify,
+    ResBlock,
     Unpatchify,
 )
-from shaggy.utils import checkpoint
-
-
-class Residual(nn.Sequential):
-    r"""Wraps a sequential module with a residual (skip) connection."""
-
-    def forward(self, x: Tensor) -> Tensor:
-        return x + super().forward(x)
-
-
-class ResBlock(nn.Module):
-    r"""Creates a residual block module.
-
-    Arguments:
-        channels: Number of channels C.
-        ffn_factor: Channel expansion factor in the FFN.
-        spatial: Number of spatial dimensions N.
-        dropout: Dropout rate in [0, 1].
-        checkpointing: Whether to use gradient checkpointing or not.
-        kwargs: Keyword arguments passed to torch.nn.Conv2d.
-    """
-
-    def __init__(
-        self,
-        channels: int,
-        ffn_factor: int = 1,
-        spatial: int = 2,
-        dropout: Optional[float] = None,
-        checkpointing: bool = False,
-        **kwargs,
-    ) -> None:
-        super().__init__()
-
-        self.checkpointing = checkpointing
-
-        # Norm
-        self.norm = LayerNorm(dim=-spatial - 1)
-
-        # FFN
-        self.ffn = nn.Sequential(
-            ConvNd(channels, ffn_factor * channels, spatial=spatial, **kwargs),
-            nn.SiLU(),
-            nn.Identity() if dropout is None else nn.Dropout(dropout),
-            ConvNd(ffn_factor * channels, channels, spatial=spatial, **kwargs),
-        )
-
-        self.ffn[-1].weight.data.mul_(1e-2)
-
-    def _forward(self, x: Tensor) -> Tensor:
-        r"""Applies layer norm, FFN, and residual addition.
-
-        Arguments:
-            x: Input tensor, with shape (B, C, L_1, ..., L_N).
-
-        Returns:
-            Output tensor, with shape (B, C, L_1, ..., L_N).
-        """
-
-        y = self.norm(x)
-        y = self.ffn(y)
-
-        return x + y
-
-    def forward(self, x: Tensor) -> Tensor:
-        if self.checkpointing:
-            return checkpoint(self._forward, reentrant=not self.training)(x)
-        else:
-            return self._forward(x)
+from shaggy.models.ae import AutoEncoder
 
 
 class ConvEncoder(nn.Module):
@@ -375,7 +307,7 @@ class ConvDecoder(nn.Module):
         return x
 
 
-class ConvAE(nn.Module):
+class ConvAE(AutoEncoder):
     r"""Creates a convolutional auto-encoder module.
 
     Arguments:
@@ -383,50 +315,7 @@ class ConvAE(nn.Module):
         decoder: Decoder module.
         saturation: Saturation function applied to latent codes.
         saturation_bound: Bound used by the saturation function.
-        noise: Standard deviation of Gaussian noise added during decoding.
     """
-
-    def __init__(
-        self,
-        encoder: nn.Module,
-        decoder: nn.Module,
-        saturation: Optional[str] = "softclip2",
-        saturation_bound: float = 5.0,
-        noise: float = 0.0,
-    ) -> None:
-        super().__init__()
-
-        self.encoder = encoder
-        self.decoder = decoder
-
-        self.saturation = saturation
-        self.saturation_bound = saturation_bound
-        self.noise = noise
-
-    def saturate(self, x: Tensor) -> Tensor:
-        r"""Applies the configured saturation function to a tensor.
-
-        Arguments:
-            x: Input tensor.
-
-        Returns:
-            Saturated tensor, with the same shape as x.
-        """
-
-        if self.saturation is None:
-            return x
-        elif self.saturation == "softclip":
-            return x / (1 + abs(x) / self.saturation_bound)
-        elif self.saturation == "softclip2":
-            return x * torch.rsqrt(1 + torch.square(x / self.saturation_bound))
-        elif self.saturation == "tanh":
-            return torch.tanh(x / self.saturation_bound) * self.saturation_bound
-        elif self.saturation == "asinh":
-            return torch.arcsinh(x)
-        elif self.saturation == "rmsnorm":
-            return x * torch.rsqrt(torch.mean(torch.square(x), dim=1, keepdim=True) + 1e-5)
-        else:
-            raise ValueError(f"unknown saturation '{self.saturation}'")
 
     def latent_shape(self, resolution: Sequence[int]) -> Tuple[int, ...]:
         r"""Returns the latent tensor shape for a given input resolution.
@@ -439,8 +328,10 @@ class ConvAE(nn.Module):
                    depends on the encoder's stride and patch size.
         """
 
+        device = next(self.encoder.parameters()).device
+
         with torch.no_grad():
-            dummy = torch.zeros(1, self.encoder.in_channels, *resolution)
+            dummy = torch.zeros(1, self.encoder.in_channels, *resolution, device=device)
             z = self.encoder(dummy)
 
         return tuple(z.shape[1:])
@@ -456,64 +347,11 @@ class ConvAE(nn.Module):
             factor: Integer compression factor = prod(input_shape) // prod(latent).
         """
 
-        import math
-
         _, *resolution = input_shape
         lat = self.latent_shape(resolution)
         factor = math.prod(input_shape) // math.prod(lat)
 
         return lat, factor
-
-    def encode(self, x: Tensor) -> Tensor:
-        r"""Encodes an image tensor into a latent representation.
-
-        Arguments:
-            x: Input image, with shape (B, C_i, L_1, ..., L_N).
-
-        Returns:
-            z: Latent code, with shape (B, C_z, L_1', ..., L_N').
-        """
-
-        dtype = get_module_dtype(self.encoder)
-        z = self.encoder(x.to(dtype))
-        z = self.saturate(z)
-
-        return z.to(x.dtype)
-
-    def decode(self, z: Tensor) -> Tensor:
-        r"""Decodes a latent code back into an image tensor.
-
-        Arguments:
-            z: Latent code, with shape (B, C_z, L_1', ..., L_N').
-
-        Returns:
-            x: Reconstructed image, with shape (B, C_o, L_1, ..., L_N).
-        """
-
-        dtype = get_module_dtype(self.decoder)
-
-        if self.noise > 0:
-            z = z + self.noise * torch.randn_like(z)
-
-        x = self.decoder(z.to(dtype))
-
-        return x.to(z.dtype)
-
-    def forward(self, x: Tensor) -> Tuple[Tensor, Tensor]:
-        r"""Encodes and reconstructs an image tensor.
-
-        Arguments:
-            x: Input image, with shape (B, C_i, L_1, ..., L_N).
-
-        Returns:
-            z: Latent code, with shape (B, C_z, L_1', ..., L_N').
-            y: Reconstructed image, with shape (B, C_o, L_1, ..., L_N).
-        """
-
-        z = self.encode(x)
-        y = self.decode(z)
-
-        return z, y
 
 
 def create_ConvAE(
@@ -521,7 +359,6 @@ def create_ConvAE(
     out_channels: int,
     lat_channels: int,
     spatial: int = 2,
-    noise_level: float = 0.0,
     saturation_bound: float = 5.0,
     saturation: Optional[str] = "softclip2",
     **kwargs,
@@ -533,7 +370,6 @@ def create_ConvAE(
         out_channels: Number of output channels.
         lat_channels: Number of latent channels.
         spatial: Number of spatial dimensions.
-        noise_level: Standard deviation of Gaussian noise injected at decode time.
         saturation_bound: Bound used by the saturation function.
         saturation: Saturation function applied to latent codes.
         **kwargs: Forwarded to both ConvEncoder and ConvDecoder
@@ -561,5 +397,4 @@ def create_ConvAE(
         decoder,
         saturation=saturation,
         saturation_bound=saturation_bound,
-        noise=noise_level,
     )

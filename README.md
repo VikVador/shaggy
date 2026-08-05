@@ -1,21 +1,17 @@
 <img src="assets/header.gif" width="100%">
 <hr style="color:#808080;">
 
-**Shaggy** is a lightweight package that implements autoencoder models in [PyTorch](https://pytorch.org). It provides modular encoder–decoder architectures, the [SOAP](https://arxiv.org/abs/2409.11321) optimizer, gradient-checkpointing utilities, and save/load tools. Basically everything needed to go from raw data to a trained latent representation with minimal boilerplate.
+**Shaggy** is a lightweight package that implements autoencoder models in [PyTorch](https://pytorch.org). It provides modular encoder–decoder architectures, the [SOAP](https://arxiv.org/abs/2409.11321) and [Muon](https://kellerjordan.github.io/posts/muon/) optimizers, gradient-checkpointing utilities, and more. Basically everything needed to go from raw data to a trained latent representation with minimal boilerplate.
 
 <hr style="color:#808080;">
-<p align="center"><b>C O N T R I B U T O R S</b></p>
+<p align="center"><b>T U T O R I A L S</b></p>
 <hr style="color:#808080;">
 
-We build on the work of [François Rozet](https://francois-rozet.github.io), [Gerome Andry](https://gerome-andry.github.io), and [Sacha Lewin](https://isach.be) as well as to the entire Science with AI Laboratory ([SAIL](https://glouppe.github.io/sail/)) team. Thanks ! 
+- [`notebook/demo-optimizers.ipynb`](notebook/demo-optimizers.ipynb) compares available optimizers (SOAP, Muon).
 
-<hr style="color:#808080;">
-<p align="center"><b>T U T O R I A L</b></p>
-<hr style="color:#808080;">
+- [`notebook/demo-graphs.ipynb`](notebook/demo-graphs.ipynb) builds and visualizes the hierarchical mesh consumed by `GraphAE`.
 
-A self-contained tutorial is available as a Jupyter notebook. It walks through dataset loading, model configuration, training with a live loss plot, and reconstruction visualization on CIFAR-10.
-
-➜ [`notebook/demo.ipynb`](notebook/demo.ipynb)
+- [`notebook/demo-models.ipynb`](notebook/demo-models.ipynb) trains `ConvAE` and `GraphAE` side by side on simulated ocean data.
 
 <hr style="color:#808080;">
 <p align="center"><b>I N S T A L L A T I O N</b></p>
@@ -37,7 +33,7 @@ A self-contained tutorial is available as a Jupyter notebook. It walks through d
     then
 
     ```
-    pip install --editable '.[all]' --extra-index-url https://download.pytorch.org/whl/cu121
+    pip install --editable '.[all]' --index-url https://download.pytorch.org/whl/cu126
     ```
     Optionally, install the pre-commit hooks to automatically detect code issues before each commit:
 

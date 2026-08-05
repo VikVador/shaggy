@@ -31,6 +31,7 @@ def test_cae(
 ) -> None:
     autoencoder = create_ConvAE(
         in_channels=in_channels,
+        out_channels=in_channels,
         hid_channels=hid_channels,
         hid_blocks=[1] * len(hid_channels),
         lat_channels=latent_channels,
@@ -72,6 +73,7 @@ def test_cae(
     # Load
     autoencoder_copy = create_ConvAE(
         in_channels=in_channels,
+        out_channels=in_channels,
         hid_channels=hid_channels,
         hid_blocks=[1] * len(hid_channels),
         lat_channels=latent_channels,
