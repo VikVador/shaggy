@@ -1,4 +1,4 @@
-r"""Convolutional Auto-Encoder (CAE) building blocks."""
+r"""Convolutional Autoencoder (CAE)."""
 
 __all__ = [
     "ConvEncoder",
@@ -11,20 +11,16 @@ import math
 import torch
 import torch.nn as nn
 
+from azula.nn.layers import ConvNd, Patchify, Unpatchify
 from torch import Tensor
 from typing import Optional, Sequence, Tuple, Union
 
-from shaggy.layers import (
-    ConvNd,
-    Patchify,
-    ResBlock,
-    Unpatchify,
-)
+from shaggy.layers import ResBlock
 from shaggy.models.ae import AutoEncoder
 
 
 class ConvEncoder(nn.Module):
-    r"""Creates a convolutional encoder.
+    r"""Creates a Convolutional Encoder.
 
     Arguments:
         in_channels: Number of input channels C_i.
@@ -81,7 +77,7 @@ class ConvEncoder(nn.Module):
             padding_mode="circular" if periodic else "zeros",
         )
 
-        self.patch = Patchify(patch_size=patch_size)
+        self.patch = Patchify(patch_shape=patch_size)
         self.descent = nn.ModuleList()
 
         for i, num_blocks in enumerate(hid_blocks):
@@ -91,7 +87,7 @@ class ConvEncoder(nn.Module):
                 if pixel_shuffle:
                     blocks.append(
                         nn.Sequential(
-                            Patchify(patch_size=stride),
+                            Patchify(patch_shape=stride),
                             ConvNd(
                                 hid_channels[i - 1] * math.prod(stride),
                                 hid_channels[i],
@@ -150,10 +146,10 @@ class ConvEncoder(nn.Module):
     def forward(self, x: Tensor) -> Tensor:
         r"""
         Arguments:
-            x: Input tensor, with shape (B, C_i, L_1, ..., L_N).
+            x: Input tensor (B, C_i, L_1, ..., L_N).
 
         Returns:
-            Output tensor, with shape (B, C_o, L_1 / 2^D, ..., L_N / 2^D).
+            Output tensor (B, C_o, L_1 / 2^D, ..., L_N / 2^D).
         """
 
         x = self.patch(x)
@@ -166,7 +162,7 @@ class ConvEncoder(nn.Module):
 
 
 class ConvDecoder(nn.Module):
-    r"""Creates a convolutional decoder module.
+    r"""Creates a Convolutional Decoder module.
 
     Arguments:
         in_channels: Number of input channels C_i.
@@ -221,7 +217,7 @@ class ConvDecoder(nn.Module):
             padding_mode="circular" if periodic else "zeros",
         )
 
-        self.unpatch = Unpatchify(patch_size=patch_size)
+        self.unpatch = Unpatchify(patch_shape=patch_size)
         self.ascent = nn.ModuleList()
 
         for i, num_blocks in reversed(list(enumerate(hid_blocks))):
@@ -261,7 +257,7 @@ class ConvDecoder(nn.Module):
                                 identity_init=identity_init,
                                 **kwargs,
                             ),
-                            Unpatchify(patch_size=stride),
+                            Unpatchify(patch_shape=stride),
                         )
                     )
                 else:
@@ -292,10 +288,10 @@ class ConvDecoder(nn.Module):
     def forward(self, x: Tensor) -> Tensor:
         r"""
         Arguments:
-            x: Input tensor, with shape (B, C_i, L_1, ..., L_N).
+            x: Input tensor (B, C_i, L_1, ..., L_N).
 
         Returns:
-            Output tensor, with shape (B, C_o, L_1 * 2^D, ..., L_N * 2^D).
+            Output tensor (B, C_o, L_1 * 2^D, ..., L_N * 2^D).
         """
 
         for blocks in self.ascent:
@@ -308,24 +304,21 @@ class ConvDecoder(nn.Module):
 
 
 class ConvAE(AutoEncoder):
-    r"""Creates a convolutional auto-encoder module.
+    r"""Creates a Convolutional Autoencoder (CAE).
 
     Arguments:
         encoder: Encoder module.
         decoder: Decoder module.
-        saturation: Saturation function applied to latent codes.
-        saturation_bound: Bound used by the saturation function.
     """
 
-    def latent_shape(self, resolution: Sequence[int]) -> Tuple[int, ...]:
-        r"""Returns the latent tensor shape for a given input resolution.
+    def latent(self, resolution: Sequence[int]) -> Tuple[int, ...]:
+        r"""Computes the latent shape.
 
         Arguments:
-            resolution: Spatial dimensions of the input image (L_1, ..., L_N).
+            resolution: Spatial dimensions of the data (L_1, ..., L_N).
 
         Returns:
-            shape: Latent tensor shape (C_z, L_1', ..., L_N'), where each L_i'
-                   depends on the encoder's stride and patch size.
+            shape: Latent code shape (C_z, L_1', ..., L_N').
         """
 
         device = next(self.encoder.parameters()).device
@@ -336,42 +329,38 @@ class ConvAE(AutoEncoder):
 
         return tuple(z.shape[1:])
 
-    def compression_info(self, input_shape: Sequence[int]) -> Tuple[Tuple[int, ...], int]:
-        r"""Returns the bottleneck latent shape and compression factor for a given input shape.
+    def compression(self, input_shape: Sequence[int]) -> Tuple[Tuple[int, ...], int]:
+        r"""Computes the compression factor of the autoencoder for a given data shape.
 
         Arguments:
-            input_shape: Full input dimensions (C, L_1, ..., L_N).
+            input_shape: Shape of the data (C, L_1, ..., L_N).
 
         Returns:
-            latent: Latent tensor shape (C_z, L_1', ..., L_N').
-            factor: Integer compression factor = prod(input_shape) // prod(latent).
+            latent: Latent code shape (C_z, L_1', ..., L_N').
+            factor: Compression factor.
         """
 
         _, *resolution = input_shape
-        lat = self.latent_shape(resolution)
-        factor = math.prod(input_shape) // math.prod(lat)
+        latent = self.latent(resolution)
+        factor = math.prod(input_shape) // math.prod(latent)
 
-        return lat, factor
+        return latent, factor
 
 
 def create_ConvAE(
     in_channels: int,
     out_channels: int,
     lat_channels: int,
-    spatial: int = 2,
-    saturation_bound: float = 5.0,
-    saturation: Optional[str] = "softclip2",
+    spatial: int,
     **kwargs,
 ) -> ConvAE:
-    r"""Instantiates a convolutional auto-encoder.
+    r"""Instantiates a Convolutional Autoencoder (CAE).
 
     Arguments:
-        in_channels: Number of input channels.
-        out_channels: Number of output channels.
-        lat_channels: Number of latent channels.
+        in_channels: Number of input channels C_i.
+        out_channels: Number of output channels C_o.
+        lat_channels: Number of latent channels C_z.
         spatial: Number of spatial dimensions.
-        saturation_bound: Bound used by the saturation function.
-        saturation: Saturation function applied to latent codes.
         **kwargs: Forwarded to both ConvEncoder and ConvDecoder
 
     Returns:
@@ -392,9 +381,4 @@ def create_ConvAE(
         **kwargs,
     )
 
-    return ConvAE(
-        encoder,
-        decoder,
-        saturation=saturation,
-        saturation_bound=saturation_bound,
-    )
+    return ConvAE(encoder, decoder)
