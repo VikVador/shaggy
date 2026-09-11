@@ -1,21 +1,49 @@
 r"""Building blocks for Autoencoders."""
 
 __all__ = [
-    "ResBlock",
-    "Projector",
-    "Compressor",
+    "ResidualBlock",
+    "ResidualGroup",
+    "ResidualTrunk",
 ]
 
 import torch.nn as nn
 
-from azula.nn.layers import ConvNd, LayerNorm
+from azula.nn.layers import ConvNd, RMSNorm
 from azula.nn.utils import checkpoint
 from torch import Tensor
-from typing import Optional
+from typing import Optional, Sequence
 
 
-class ResBlock(nn.Module):
-    r"""Creates a convolutional residual block module.
+class SwiGLU(nn.Module):
+    r"""Creates a (channel-wise) SwiGLU activation layer.
+
+    References:
+        | GLU Variants Improve Transformer (Shazeer, 2020)
+        | https://arxiv.org/abs/2002.05202
+
+    Arguments:
+        spatial: Number of spatial dimensions N.
+    """
+
+    def __init__(self, spatial: int = 2) -> None:
+        super().__init__()
+
+        self.dim = -spatial - 1
+
+    def forward(self, x: Tensor) -> Tensor:
+        r"""
+        Arguments:
+            x: Input tensor (B, 2C, ...).
+
+        Returns:
+            Output tensor (B, C, ...).
+        """
+        x1, x2 = x.unflatten(self.dim, (-1, 2)).unbind(self.dim)
+        return x1 * nn.functional.silu(x2)
+
+
+class ResidualBlock(nn.Module):
+    r"""Creates a (convolutional) residual block module.
 
     Arguments:
         channels: Number of channels C.
@@ -23,7 +51,7 @@ class ResBlock(nn.Module):
         spatial: Number of spatial dimensions N.
         dropout: Dropout rate in [0, 1].
         checkpointing: Whether to use gradient checkpointing or not.
-        kwargs: Keyword arguments passed to azula.nn.layers.ConvNd.
+        kwargs: Keyword arguments passed to convolutional layers.
     """
 
     def __init__(
@@ -38,22 +66,32 @@ class ResBlock(nn.Module):
         super().__init__()
 
         self.checkpointing = checkpointing
-
-        self.norm = LayerNorm(dim=-spatial - 1)
-
+        self.norm = RMSNorm(dim=-spatial - 1)
         self.ffn = nn.Sequential(
-            ConvNd(channels, ffn_factor * channels, spatial=spatial, **kwargs),
-            nn.SiLU(),
+            ConvNd(
+                channels,
+                channels * ffn_factor * 2,  # Doubles for SwiGLU
+                spatial=spatial,
+                **kwargs,
+            ),
+            SwiGLU(spatial=spatial),
             nn.Identity() if dropout is None else nn.Dropout(dropout),
-            ConvNd(ffn_factor * channels, channels, spatial=spatial, **kwargs),
+            ConvNd(
+                channels * ffn_factor,
+                channels,
+                spatial=spatial,
+                **kwargs,
+            ),
         )
 
+        # Identity initialization
         self.ffn[-1].weight.data.mul_(1e-2)
+        self.ffn[-1].bias.data.zero_()
 
     def _forward(self, x: Tensor) -> Tensor:
-        y = self.norm(x)
-        y = self.ffn(y)
-        return x + y
+        r"""Checkpointable forward pass."""
+
+        return x + self.ffn(self.norm(x))
 
     def forward(self, x: Tensor) -> Tensor:
         r"""
@@ -70,128 +108,112 @@ class ResBlock(nn.Module):
             return self._forward(x)
 
 
-class Projector(nn.Module):
-    r"""Lifts a plane tensor onto a new trailing axis.
+class ResidualGroup(nn.Module):
+    r"""Creates a long-range residual blocks module.
 
-    Lifting:
-        >> x        (B, C, X, Y)
-        >> lift(x)  (B, C * L, X, Y)
-        >> view     (B, C, L, X, Y)
-        >> permute  (B, C, X, Y, L)
+    References:
+        | Image Super-Resolution Using Very Deep Residual Channel Attention Networks (Zhang et al., 2018)
+        | https://arxiv.org/abs/1807.02758
 
     Arguments:
         channels: Number of channels C.
-        lift_size: Size of the axis the tensor is lifted onto.
-        num_blocks: Number of residual blocks applied in the lifted space.
-        ffn_factor: Channel expansion factor in each FFN.
-        dropout: Dropout rate in [0, 1].
-        checkpointing: Whether to use gradient checkpointing or not.
+        blocks: Blocks to wrap, applied in order.
+        spatial: Number of spatial dimensions N.
+        kwargs: Keyword arguments passed to convolutional layers.
     """
 
     def __init__(
         self,
         channels: int,
-        lift_size: int,
-        num_blocks: int = 3,
-        ffn_factor: int = 1,
-        dropout: Optional[float] = None,
-        checkpointing: bool = False,
+        blocks: Sequence[nn.Module],
+        spatial: int = 2,
+        **kwargs,
     ) -> None:
         super().__init__()
 
-        self.channels = channels
-        self.lift_size = lift_size
+        self.blocks = nn.Sequential(*blocks)
 
-        self.lift = ConvNd(channels, lift_size * channels, spatial=2, kernel_size=1)
+        # Fusing convolution after long-range skip
+        self.fuse = ConvNd(channels, channels, spatial=spatial, **kwargs)
 
-        self.blocks = nn.Sequential(*[
-            ResBlock(
-                lift_size * channels,
-                ffn_factor=ffn_factor,
-                spatial=2,
-                dropout=dropout,
-                checkpointing=checkpointing,
-                kernel_size=1,
-            )
-            for _ in range(num_blocks)
-        ])
+        # Identity initialization
+        self.fuse.weight.data.mul_(1e-2)
+        self.fuse.bias.data.zero_()
 
     def forward(self, x: Tensor) -> Tensor:
         r"""
         Arguments:
-            x: Plane tensor (B, C, X, Y).
+            x: Input tensor (B, C, L_1, ..., L_N).
 
         Returns:
-            Volume tensor (B, C, X, Y, L).
+            Output tensor (B, C, L_1, ..., L_N).
         """
-
-        b, _, nx, ny = x.shape
-
-        x = self.lift(x)
-        x = self.blocks(x)
-        x = x.view(b, self.channels, self.lift_size, nx, ny)
-        x = x.permute(0, 1, 3, 4, 2).contiguous()
-
-        return x
+        return x + self.fuse(self.blocks(x))
 
 
-class Compressor(nn.Module):
-    r"""Folds the trailing axis of a volume tensor into channels.
-
-    Compressing:
-        >> x        (B, C, X, Y, L)
-        >> permute  (B, C, L, X, Y)
-        >> reshape  (B, C * L, X, Y)
-        >> project  (B, C, X, Y)
-
+class ResidualTrunk(nn.Module):
+    r"""Creates a (convolutional) residuals within residuals block module.
 
     Arguments:
         channels: Number of channels C.
-        lift_size: Size of the axis folded into the channel dimension.
-        num_blocks: Number of residual blocks applied in the folded (C * lift_size) space.
-        ffn_factor: Channel expansion factor in each ResBlock's FFN.
+        num_blocks: Number of residual blocks, per group when grouped.
+        num_groups: Number of residual groups, or 0 for a flat stack.
+        spatial: Number of spatial dimensions N.
+        ffn_factor: Channel expansion factor in the feed-forward networks.
         dropout: Dropout rate in [0, 1].
         checkpointing: Whether to use gradient checkpointing or not.
+        kwargs: Keyword arguments passed to convolutional layers.
     """
 
     def __init__(
         self,
         channels: int,
-        lift_size: int,
-        num_blocks: int = 3,
+        num_blocks: int,
+        num_groups: int,
+        spatial: int = 2,
         ffn_factor: int = 1,
         dropout: Optional[float] = None,
         checkpointing: bool = False,
+        **kwargs,
     ) -> None:
         super().__init__()
 
-        self.blocks = nn.Sequential(*[
-            ResBlock(
-                lift_size * channels,
-                ffn_factor=ffn_factor,
-                spatial=2,
-                dropout=dropout,
-                checkpointing=checkpointing,
-                kernel_size=1,
-            )
-            for _ in range(num_blocks)
-        ])
+        block = lambda: ResidualBlock(
+            channels,
+            ffn_factor=ffn_factor,
+            spatial=spatial,
+            dropout=dropout,
+            checkpointing=checkpointing,
+            **kwargs,
+        )
 
-        self.project = ConvNd(lift_size * channels, channels, spatial=2, kernel_size=1)
+        # Simple stack of residual blocks
+        if num_groups == 0:
+            self.blocks = nn.Sequential(
+                *[block() for _ in range(num_blocks)],
+            )
+
+        # Nested residual groups of residual blocks
+        else:
+            groups = [
+                ResidualGroup(
+                    channels,
+                    [block() for _ in range(num_blocks)],
+                    spatial=spatial,
+                    **kwargs,
+                )
+                for _ in range(num_groups)
+            ]
+
+            # Adding a final skip connection to the trunk
+            self.blocks = ResidualGroup(channels, groups, spatial=spatial, **kwargs)
 
     def forward(self, x: Tensor) -> Tensor:
         r"""
         Arguments:
-            x: Volume tensor (B, C, X, Y, L).
+            x: Input tensor (B, C, L_1, ..., L_N).
 
         Returns:
-            Plane tensor (B, C, X, Y).
+            Output tensor (B, C, L_1, ..., L_N).
         """
-
-        b, c, nx, ny, nz = x.shape
-
-        x = x.permute(0, 1, 4, 2, 3).reshape(b, c * nz, nx, ny)
-        x = self.blocks(x)
-        x = self.project(x)
-
-        return x
+        return self.blocks(x)

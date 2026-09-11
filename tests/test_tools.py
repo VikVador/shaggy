@@ -1,14 +1,16 @@
-r"""Tests for shaggy.tools."""
+r"""Tests for Shaggy tools: save, load_config, load_weights."""
 
+import pytest
 import torch
+import torch.nn as nn
 
 from omegaconf import OmegaConf
 from pathlib import Path
 
 from shaggy.models.cae import create_ConvAE
-from shaggy.tools import load, save
+from shaggy.tools import load_config, load_weights, save
 
-MINIMAL_CONFIG = {
+CONFIG = {
     "in_channels": 2,
     "out_channels": 2,
     "lat_channels": 4,
@@ -18,43 +20,64 @@ MINIMAL_CONFIG = {
 }
 
 
-def test_tools_save_load_roundtrip(tmp_path: Path) -> None:
-    r"""Checks that save/load preserves model weights exactly."""
-    config = OmegaConf.create(MINIMAL_CONFIG)
-    model = create_ConvAE(**config)
+def test_save_writes_config_and_weights(tmp_path: Path) -> None:
+    r"""Determines if save writes config.yml and model.pth in a directory it creates."""
+    target = tmp_path / "nested" / "run"
 
-    save(model, config, tmp_path / "run")
+    save(create_ConvAE(**CONFIG), CONFIG, target)
 
-    assert (tmp_path / "run" / "config.yml").exists()
-    assert (tmp_path / "run" / "model.pth").exists()
+    assert (target / "config.yml").is_file()
+    assert (target / "model.pth").is_file()
 
-    loaded = load(tmp_path / "run", device="cpu")
 
-    for (name, p), (_, p_loaded) in zip(
-        model.state_dict().items(),
-        loaded.state_dict().items(),
-    ):
+@pytest.mark.parametrize("as_omegaconf", [False, True])
+def test_load_config_roundtrip(tmp_path: Path, as_omegaconf: bool) -> None:
+    r"""Determines if load_config returns the saved config, given as a dict or an OmegaConf."""
+    config = OmegaConf.create(CONFIG) if as_omegaconf else CONFIG
+
+    save(create_ConvAE(**CONFIG), config, tmp_path)
+
+    assert OmegaConf.to_container(load_config(tmp_path)) == CONFIG
+
+
+def test_load_weights_roundtrip(tmp_path: Path) -> None:
+    r"""Determines if a model rebuilt from the saved config recovers the saved weights exactly."""
+    model = create_ConvAE(**CONFIG)
+    save(model, CONFIG, tmp_path)
+
+    loaded = load_weights(create_ConvAE(**load_config(tmp_path)), tmp_path)
+
+    for (name, p), p_loaded in zip(model.state_dict().items(), loaded.state_dict().values()):
         assert torch.equal(p, p_loaded), f"weight mismatch for '{name}'"
 
 
-def test_tools_load_sets_eval_mode(tmp_path: Path) -> None:
-    r"""Checks that load always returns the model in eval mode."""
-    config = OmegaConf.create(MINIMAL_CONFIG)
-    model = create_ConvAE(**config).train()
+def test_load_weights_in_place_and_eval(tmp_path: Path) -> None:
+    r"""Determines if load_weights fills the given model and returns it in eval mode."""
+    save(create_ConvAE(**CONFIG), CONFIG, tmp_path)
 
-    save(model, config, tmp_path / "run")
+    model = create_ConvAE(**CONFIG).train()
+    loaded = load_weights(model, tmp_path)
 
-    loaded = load(tmp_path / "run", device="cpu")
-
+    assert loaded is model
     assert not loaded.training
 
 
-def test_tools_save_creates_directory(tmp_path: Path) -> None:
-    r"""Checks that save creates the target directory if it does not exist."""
-    config = OmegaConf.create(MINIMAL_CONFIG)
-    model = create_ConvAE(**config)
-    target = tmp_path / "nested" / "dir"
+def test_load_weights_any_module(tmp_path: Path) -> None:
+    r"""Determines if the tools work for any nn.Module, not only autoencoders."""
+    model = nn.Linear(3, 5)
+    save(model, {"in_features": 3, "out_features": 5}, tmp_path)
 
-    save(model, config, target)
+    loaded = load_weights(nn.Linear(**load_config(tmp_path)), tmp_path)
 
-    assert target.is_dir()
+    assert torch.equal(loaded.weight, model.weight)
+    assert torch.equal(loaded.bias, model.bias)
+
+
+def test_load_weights_architecture_mismatch(tmp_path: Path) -> None:
+    r"""Determines if loading weights into a model of another architecture is rejected."""
+    save(create_ConvAE(**CONFIG), CONFIG, tmp_path)
+
+    wider = create_ConvAE(**{**CONFIG, "hid_channels": [16]})
+
+    with pytest.raises(RuntimeError):
+        load_weights(wider, tmp_path)

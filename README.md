@@ -7,11 +7,9 @@
 <p align="center"><b>T U T O R I A L S</b></p>
 <hr style="color:#808080;">
 
-- [`notebook/demo-optimizers.ipynb`](notebook/demo-optimizers.ipynb) compares available optimizers (SOAP, Muon).
+- [`notebook/demo-optimizers.ipynb`](notebook/demo-optimizers.ipynb) compares the available optimizers (SOAP, HybridMA with Muon) against AdamW.
 
-- [`notebook/demo-graphs.ipynb`](notebook/demo-graphs.ipynb) builds and visualizes the hierarchical mesh consumed by `GraphAE`.
-
-- [`notebook/demo-models.ipynb`](notebook/demo-models.ipynb) trains `ConvAE` and `GraphAE` side by side on simulated ocean data.
+- [`notebook/demo.ipynb`](notebook/demo.ipynb) trains an asymmetric 3D `ConvAE` on real ocean data, encoder then decoder, and compares its reconstruction error to the dataset mean.
 
 <hr style="color:#808080;">
 <p align="center"><b>I N S T A L L A T I O N</b></p>

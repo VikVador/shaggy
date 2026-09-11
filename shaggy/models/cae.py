@@ -11,32 +11,46 @@ import math
 import torch
 import torch.nn as nn
 
-from azula.nn.layers import ConvNd, Patchify, Unpatchify
+from azula.nn.layers import ConvNd, Patchify, RMSNorm, Unpatchify
 from torch import Tensor
-from typing import Optional, Sequence, Tuple, Union
+from typing import Any, Dict, Optional, Sequence, Tuple, Union
 
-from shaggy.layers import ResBlock
+from shaggy.layers import ResidualTrunk
 from shaggy.models.ae import AutoEncoder
 
 
+def broadcast_to_axes(value: Union[int, Sequence[int]], spatial: int) -> Tuple[int, ...]:
+    r"""Broadcasts an integer, or a sequence of integers, to one value per spatial axis."""
+    if isinstance(value, int):
+        return (value,) * spatial
+
+    # Security
+    assert (
+        len(value) == spatial
+    ), f"ERROR (broadcast_to_axes) | Expected {spatial} values, one per axis, got {len(value)}."
+
+    return tuple(value)
+
+
 class ConvEncoder(nn.Module):
-    r"""Creates a Convolutional Encoder.
+    r"""Creates a convolutional encoder module.
 
     Arguments:
         in_channels: Number of input channels C_i.
         out_channels: Number of output channels C_o.
-        hid_channels: Numbers of channels at each depth.
-        hid_blocks: Numbers of hidden blocks at each depth.
+        hid_channels: Number of channels at each depth.
+        hid_blocks: Number of residual blocks at each depth.
+        hid_groups: Number of residual groups at each depth, or 0 for a flat stack.
         kernel_size: Kernel size of all convolutions.
         stride: Stride of the downsampling convolutions.
-        pixel_shuffle: Whether to use pixel shuffling or not.
-        ffn_factor: Channel expansion factor in each FFN.
+        pixel_shuffle: Whether to downsample with pixel shuffling or not.
+        ffn_factor: Channel expansion factor in the feed-forward networks.
         spatial: Number of spatial dimensions N.
         patch_size: Patch size applied before the first convolution.
         periodic: Whether the spatial dimensions are periodic or not.
         dropout: Dropout rate in [0, 1].
         checkpointing: Whether to use gradient checkpointing or not.
-        identity_init: Initialize down/upsampling convolutions as identity.
+        identity_init: Whether to initialize projection and resampling layers as identity or not.
     """
 
     def __init__(
@@ -45,6 +59,7 @@ class ConvEncoder(nn.Module):
         out_channels: int,
         hid_channels: Sequence[int] = (64, 128, 256),
         hid_blocks: Sequence[int] = (3, 3, 3),
+        hid_groups: Optional[Sequence[int]] = None,
         kernel_size: Union[int, Sequence[int]] = 3,
         stride: Union[int, Sequence[int]] = 2,
         pixel_shuffle: bool = True,
@@ -58,34 +73,49 @@ class ConvEncoder(nn.Module):
     ) -> None:
         super().__init__()
 
-        assert len(hid_blocks) == len(hid_channels)
+        if hid_groups is None:
+            hid_groups = [0] * len(hid_channels)
 
-        self.in_channels = in_channels
+        kernel_size = broadcast_to_axes(kernel_size, spatial)
+        stride = broadcast_to_axes(stride, spatial)
+        patch_size = broadcast_to_axes(patch_size, spatial)
 
-        if isinstance(kernel_size, int):
-            kernel_size = [kernel_size] * spatial
+        # Security
+        assert (
+            len(hid_channels) == len(hid_blocks) == len(hid_groups)
+        ), "ERROR (ConvEncoder) | hid_channels, hid_blocks and hid_groups must match in length."
 
-        if isinstance(stride, int):
-            stride = [stride] * spatial
-
-        if isinstance(patch_size, int):
-            patch_size = [patch_size] * spatial
+        assert all(
+            k % 2 == 1 for k in kernel_size
+        ), "ERROR (ConvEncoder) | Kernel sizes must be odd to preserve the spatial dimensions."
 
         kwargs = dict(
-            kernel_size=tuple(kernel_size),
+            kernel_size=kernel_size,
             padding=tuple(k // 2 for k in kernel_size),
             padding_mode="circular" if periodic else "zeros",
         )
 
+        self.in_channels = in_channels
+        self.scale = tuple(p * s ** (len(hid_channels) - 1) for p, s in zip(patch_size, stride))
+
         self.patch = Patchify(patch_shape=patch_size)
-        self.descent = nn.ModuleList()
 
-        for i, num_blocks in enumerate(hid_blocks):
-            blocks = nn.ModuleList()
+        self.in_proj = ConvNd(
+            math.prod(patch_size) * in_channels,
+            hid_channels[0],
+            spatial=spatial,
+            identity_init=identity_init,
+            **kwargs,
+        )
 
+        self.descent = nn.Sequential()
+
+        for i, (num_blocks, num_groups) in enumerate(zip(hid_blocks, hid_groups)):
             if i > 0:
+                self.descent.append(RMSNorm(dim=-spatial - 1))
+
                 if pixel_shuffle:
-                    blocks.append(
+                    self.descent.append(
                         nn.Sequential(
                             Patchify(patch_shape=stride),
                             ConvNd(
@@ -98,7 +128,7 @@ class ConvEncoder(nn.Module):
                         )
                     )
                 else:
-                    blocks.append(
+                    self.descent.append(
                         ConvNd(
                             hid_channels[i - 1],
                             hid_channels[i],
@@ -108,40 +138,29 @@ class ConvEncoder(nn.Module):
                             **kwargs,
                         )
                     )
-            else:
-                blocks.append(
-                    ConvNd(
-                        math.prod(patch_size) * in_channels,
-                        hid_channels[i],
-                        spatial=spatial,
-                        **kwargs,
-                    )
-                )
 
-            for _ in range(num_blocks):
-                blocks.append(
-                    ResBlock(
-                        hid_channels[i],
-                        ffn_factor=ffn_factor,
-                        spatial=spatial,
-                        dropout=dropout,
-                        checkpointing=checkpointing,
-                        **kwargs,
-                    )
+            self.descent.append(
+                ResidualTrunk(
+                    hid_channels[i],
+                    num_blocks=num_blocks,
+                    num_groups=num_groups,
+                    spatial=spatial,
+                    ffn_factor=ffn_factor,
+                    dropout=dropout,
+                    checkpointing=checkpointing,
+                    **kwargs,
                 )
+            )
 
-            if i + 1 == len(hid_blocks):
-                blocks.append(
-                    ConvNd(
-                        hid_channels[i],
-                        out_channels,
-                        spatial=spatial,
-                        identity_init=identity_init,
-                        **kwargs,
-                    )
-                )
+        self.out_norm = RMSNorm(dim=-spatial - 1)
 
-            self.descent.append(blocks)
+        self.out_proj = ConvNd(
+            hid_channels[-1],
+            out_channels,
+            spatial=spatial,
+            identity_init=identity_init,
+            **kwargs,
+        )
 
     def forward(self, x: Tensor) -> Tensor:
         r"""
@@ -149,36 +168,32 @@ class ConvEncoder(nn.Module):
             x: Input tensor (B, C_i, L_1, ..., L_N).
 
         Returns:
-            Output tensor (B, C_o, L_1 / 2^D, ..., L_N / 2^D).
+            Output tensor (B, C_o, L_1 / scale_1, ..., L_N / scale_N).
         """
-
-        x = self.patch(x)
-
-        for blocks in self.descent:
-            for block in blocks:
-                x = block(x)
-
+        x = self.descent(self.in_proj(self.patch(x)))
+        x = self.out_proj(self.out_norm(x))
         return x
 
 
 class ConvDecoder(nn.Module):
-    r"""Creates a Convolutional Decoder module.
+    r"""Creates a convolutional decoder module.
 
     Arguments:
         in_channels: Number of input channels C_i.
         out_channels: Number of output channels C_o.
-        hid_channels: Numbers of channels at each depth.
-        hid_blocks: Numbers of hidden blocks at each depth.
+        hid_channels: Number of channels at each depth.
+        hid_blocks: Number of residual blocks at each depth.
+        hid_groups: Number of residual groups at each depth, or 0 for a flat stack.
         kernel_size: Kernel size of all convolutions.
-        stride: Stride of the downsampling convolutions.
-        pixel_shuffle: Whether to use pixel shuffling or not.
-        ffn_factor: Channel expansion factor in each FFN.
+        stride: Stride of the upsampling convolutions.
+        pixel_shuffle: Whether to upsample with pixel shuffling or not.
+        ffn_factor: Channel expansion factor in the feed-forward networks.
         spatial: Number of spatial dimensions N.
         patch_size: Patch size applied after the last convolution.
         periodic: Whether the spatial dimensions are periodic or not.
         dropout: Dropout rate in [0, 1].
         checkpointing: Whether to use gradient checkpointing or not.
-        identity_init: Initialize down/upsampling convolutions as identity.
+        identity_init: Whether to initialize projection and resampling layers as identity or not.
     """
 
     def __init__(
@@ -187,6 +202,7 @@ class ConvDecoder(nn.Module):
         out_channels: int,
         hid_channels: Sequence[int] = (64, 128, 256),
         hid_blocks: Sequence[int] = (3, 3, 3),
+        hid_groups: Optional[Sequence[int]] = None,
         kernel_size: Union[int, Sequence[int]] = 3,
         stride: Union[int, Sequence[int]] = 2,
         pixel_shuffle: bool = True,
@@ -200,55 +216,59 @@ class ConvDecoder(nn.Module):
     ) -> None:
         super().__init__()
 
-        assert len(hid_blocks) == len(hid_channels)
+        if hid_groups is None:
+            hid_groups = [0] * len(hid_channels)
 
-        if isinstance(kernel_size, int):
-            kernel_size = [kernel_size] * spatial
+        kernel_size = broadcast_to_axes(kernel_size, spatial)
+        stride = broadcast_to_axes(stride, spatial)
+        patch_size = broadcast_to_axes(patch_size, spatial)
 
-        if isinstance(stride, int):
-            stride = [stride] * spatial
+        # Security
+        assert (
+            len(hid_channels) == len(hid_blocks) == len(hid_groups)
+        ), "ERROR (ConvDecoder) | hid_channels, hid_blocks and hid_groups must match in length."
 
-        if isinstance(patch_size, int):
-            patch_size = [patch_size] * spatial
+        assert all(
+            k % 2 == 1 for k in kernel_size
+        ), "ERROR (ConvDecoder) | Kernel sizes must be odd to preserve the spatial dimensions."
 
         kwargs = dict(
-            kernel_size=tuple(kernel_size),
+            kernel_size=kernel_size,
             padding=tuple(k // 2 for k in kernel_size),
             padding_mode="circular" if periodic else "zeros",
         )
 
-        self.unpatch = Unpatchify(patch_shape=patch_size)
-        self.ascent = nn.ModuleList()
+        self.scale = tuple(p * s ** (len(hid_channels) - 1) for p, s in zip(patch_size, stride))
 
-        for i, num_blocks in reversed(list(enumerate(hid_blocks))):
-            blocks = nn.ModuleList()
+        self.in_proj = ConvNd(
+            in_channels,
+            hid_channels[-1],
+            spatial=spatial,
+            identity_init=identity_init,
+            **kwargs,
+        )
 
-            if i + 1 == len(hid_blocks):
-                blocks.append(
-                    ConvNd(
-                        in_channels,
-                        hid_channels[i],
-                        spatial=spatial,
-                        identity_init=identity_init,
-                        **kwargs,
-                    )
+        self.ascent = nn.Sequential()
+
+        for i in reversed(range(len(hid_channels))):
+            self.ascent.append(
+                ResidualTrunk(
+                    hid_channels[i],
+                    num_blocks=hid_blocks[i],
+                    num_groups=hid_groups[i],
+                    spatial=spatial,
+                    ffn_factor=ffn_factor,
+                    dropout=dropout,
+                    checkpointing=checkpointing,
+                    **kwargs,
                 )
-
-            for _ in range(num_blocks):
-                blocks.append(
-                    ResBlock(
-                        hid_channels[i],
-                        ffn_factor=ffn_factor,
-                        spatial=spatial,
-                        dropout=dropout,
-                        checkpointing=checkpointing,
-                        **kwargs,
-                    )
-                )
+            )
 
             if i > 0:
+                self.ascent.append(RMSNorm(dim=-spatial - 1))
+
                 if pixel_shuffle:
-                    blocks.append(
+                    self.ascent.append(
                         nn.Sequential(
                             ConvNd(
                                 hid_channels[i],
@@ -261,9 +281,9 @@ class ConvDecoder(nn.Module):
                         )
                     )
                 else:
-                    blocks.append(
+                    self.ascent.append(
                         nn.Sequential(
-                            nn.Upsample(scale_factor=tuple(stride), mode="nearest"),
+                            nn.Upsample(scale_factor=stride, mode="nearest"),
                             ConvNd(
                                 hid_channels[i],
                                 hid_channels[i - 1],
@@ -273,17 +293,18 @@ class ConvDecoder(nn.Module):
                             ),
                         )
                     )
-            else:
-                blocks.append(
-                    ConvNd(
-                        hid_channels[i],
-                        math.prod(patch_size) * out_channels,
-                        spatial=spatial,
-                        **kwargs,
-                    )
-                )
 
-            self.ascent.append(blocks)
+        self.out_norm = RMSNorm(dim=-spatial - 1)
+
+        self.out_proj = ConvNd(
+            hid_channels[0],
+            math.prod(patch_size) * out_channels,
+            spatial=spatial,
+            identity_init=identity_init,
+            **kwargs,
+        )
+
+        self.unpatch = Unpatchify(patch_shape=patch_size)
 
     def forward(self, x: Tensor) -> Tensor:
         r"""
@@ -291,15 +312,10 @@ class ConvDecoder(nn.Module):
             x: Input tensor (B, C_i, L_1, ..., L_N).
 
         Returns:
-            Output tensor (B, C_o, L_1 * 2^D, ..., L_N * 2^D).
+            Output tensor (B, C_o, L_1 * scale_1, ..., L_N * scale_N).
         """
-
-        for blocks in self.ascent:
-            for block in blocks:
-                x = block(x)
-
-        x = self.unpatch(x)
-
+        x = self.ascent(self.in_proj(x))
+        x = self.unpatch(self.out_proj(self.out_norm(x)))
         return x
 
 
@@ -351,7 +367,9 @@ def create_ConvAE(
     in_channels: int,
     out_channels: int,
     lat_channels: int,
-    spatial: int,
+    spatial: int = 2,
+    config_encoder: Optional[Dict[str, Any]] = None,
+    config_decoder: Optional[Dict[str, Any]] = None,
     **kwargs,
 ) -> ConvAE:
     r"""Instantiates a Convolutional Autoencoder (CAE).
@@ -360,8 +378,10 @@ def create_ConvAE(
         in_channels: Number of input channels C_i.
         out_channels: Number of output channels C_o.
         lat_channels: Number of latent channels C_z.
-        spatial: Number of spatial dimensions.
-        **kwargs: Forwarded to both ConvEncoder and ConvDecoder
+        spatial: Number of spatial dimensions N.
+        config_encoder: Keyword arguments overriding kwargs for the encoder.
+        config_decoder: Keyword arguments overriding kwargs for the decoder.
+        kwargs: Keyword arguments shared by ConvEncoder and ConvDecoder.
 
     Returns:
         autoencoder: A ConvAE instance.
@@ -371,14 +391,20 @@ def create_ConvAE(
         in_channels=in_channels,
         out_channels=lat_channels,
         spatial=spatial,
-        **kwargs,
+        **{**kwargs, **(config_encoder or {})},
     )
 
     decoder = ConvDecoder(
         in_channels=lat_channels,
         out_channels=out_channels,
         spatial=spatial,
-        **kwargs,
+        **{**kwargs, **(config_decoder or {})},
+    )
+
+    # Security
+    assert encoder.scale == decoder.scale, (
+        f"ERROR (create_ConvAE) | Encoder downsamples by {encoder.scale} "
+        f"but decoder upsamples by {decoder.scale}."
     )
 
     return ConvAE(encoder, decoder)
