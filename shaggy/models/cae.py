@@ -1,4 +1,4 @@
-r"""Convolutional Auto-Encoder (CAE) building blocks."""
+r"""Convolutional Autoencoder (CAE)."""
 
 __all__ = [
     "ConvEncoder",
@@ -11,104 +11,47 @@ import math
 import torch
 import torch.nn as nn
 
-from azula.nn.utils import get_module_dtype
+from azula.nn.layers import ConvNd, Patchify, RMSNorm, Unpatchify
+from collections.abc import Sequence
 from torch import Tensor
-from typing import Optional, Sequence, Tuple, Union
+from typing import Any, Optional, Union
 
-from shaggy.layers import (
-    ConvNd,
-    LayerNorm,
-    Patchify,
-    Unpatchify,
-)
-from shaggy.utils import checkpoint
+from shaggy.layers import ResidualTrunk
+from shaggy.models.ae import AutoEncoder
 
 
-class Residual(nn.Sequential):
-    r"""Wraps a sequential module with a residual (skip) connection."""
+def broadcast_to_axes(value: Union[int, Sequence[int]], spatial: int) -> tuple[int, ...]:
+    r"""Broadcasts an integer, or a sequence of integers, to one value per spatial axis."""
+    if isinstance(value, int):
+        return (value,) * spatial
 
-    def forward(self, x: Tensor) -> Tensor:
-        return x + super().forward(x)
+    # Security
+    assert len(value) == spatial, (
+        f"ERROR (broadcast_to_axes) | Expected {spatial} values, one per axis, got {len(value)}."
+    )
 
-
-class ResBlock(nn.Module):
-    r"""Creates a residual block module.
-
-    Arguments:
-        channels: Number of channels C.
-        ffn_factor: Channel expansion factor in the FFN.
-        spatial: Number of spatial dimensions N.
-        dropout: Dropout rate in [0, 1].
-        checkpointing: Whether to use gradient checkpointing or not.
-        kwargs: Keyword arguments passed to torch.nn.Conv2d.
-    """
-
-    def __init__(
-        self,
-        channels: int,
-        ffn_factor: int = 1,
-        spatial: int = 2,
-        dropout: Optional[float] = None,
-        checkpointing: bool = False,
-        **kwargs,
-    ) -> None:
-        super().__init__()
-
-        self.checkpointing = checkpointing
-
-        # Norm
-        self.norm = LayerNorm(dim=-spatial - 1)
-
-        # FFN
-        self.ffn = nn.Sequential(
-            ConvNd(channels, ffn_factor * channels, spatial=spatial, **kwargs),
-            nn.SiLU(),
-            nn.Identity() if dropout is None else nn.Dropout(dropout),
-            ConvNd(ffn_factor * channels, channels, spatial=spatial, **kwargs),
-        )
-
-        self.ffn[-1].weight.data.mul_(1e-2)
-
-    def _forward(self, x: Tensor) -> Tensor:
-        r"""Applies layer norm, FFN, and residual addition.
-
-        Arguments:
-            x: Input tensor, with shape (B, C, L_1, ..., L_N).
-
-        Returns:
-            Output tensor, with shape (B, C, L_1, ..., L_N).
-        """
-
-        y = self.norm(x)
-        y = self.ffn(y)
-
-        return x + y
-
-    def forward(self, x: Tensor) -> Tensor:
-        if self.checkpointing:
-            return checkpoint(self._forward, reentrant=not self.training)(x)
-        else:
-            return self._forward(x)
+    return tuple(value)
 
 
 class ConvEncoder(nn.Module):
-    r"""Creates a convolutional encoder.
+    r"""Creates a convolutional encoder module.
 
     Arguments:
         in_channels: Number of input channels C_i.
         out_channels: Number of output channels C_o.
-        hid_channels: Numbers of channels at each depth.
-        hid_blocks: Numbers of hidden blocks at each depth.
+        hid_channels: Number of channels at each depth.
+        hid_blocks: Number of residual blocks at each depth.
+        hid_groups: Number of residual groups at each depth, or 0 for a flat stack.
         kernel_size: Kernel size of all convolutions.
         stride: Stride of the downsampling convolutions.
-        pixel_shuffle: Whether to use pixel shuffling or not.
-        ffn_factor: Channel expansion factor in each FFN.
+        pixel_shuffle: Whether to downsample with pixel shuffling or not.
+        ffn_factor: Channel expansion factor in the feed-forward networks.
         spatial: Number of spatial dimensions N.
         patch_size: Patch size applied before the first convolution.
         periodic: Whether the spatial dimensions are periodic or not.
         dropout: Dropout rate in [0, 1].
         checkpointing: Whether to use gradient checkpointing or not.
-        identity_init: Initialize down/upsampling convolutions as identity.
+        identity_init: Whether to initialize projection and resampling layers as identity or not.
     """
 
     def __init__(
@@ -117,6 +60,7 @@ class ConvEncoder(nn.Module):
         out_channels: int,
         hid_channels: Sequence[int] = (64, 128, 256),
         hid_blocks: Sequence[int] = (3, 3, 3),
+        hid_groups: Optional[Sequence[int]] = None,
         kernel_size: Union[int, Sequence[int]] = 3,
         stride: Union[int, Sequence[int]] = 2,
         pixel_shuffle: bool = True,
@@ -130,36 +74,51 @@ class ConvEncoder(nn.Module):
     ) -> None:
         super().__init__()
 
-        assert len(hid_blocks) == len(hid_channels)
+        if hid_groups is None:
+            hid_groups = [0] * len(hid_channels)
 
-        self.in_channels = in_channels
+        kernel_size = broadcast_to_axes(kernel_size, spatial)
+        stride = broadcast_to_axes(stride, spatial)
+        patch_size = broadcast_to_axes(patch_size, spatial)
 
-        if isinstance(kernel_size, int):
-            kernel_size = [kernel_size] * spatial
+        # Security
+        assert len(hid_channels) == len(hid_blocks) == len(hid_groups), (
+            "ERROR (ConvEncoder) | hid_channels, hid_blocks and hid_groups must match in length."
+        )
 
-        if isinstance(stride, int):
-            stride = [stride] * spatial
-
-        if isinstance(patch_size, int):
-            patch_size = [patch_size] * spatial
+        assert all(k % 2 == 1 for k in kernel_size), (
+            "ERROR (ConvEncoder) | Kernel sizes must be odd to preserve the spatial dimensions."
+        )
 
         kwargs = dict(
-            kernel_size=tuple(kernel_size),
+            kernel_size=kernel_size,
             padding=tuple(k // 2 for k in kernel_size),
             padding_mode="circular" if periodic else "zeros",
         )
 
-        self.patch = Patchify(patch_size=patch_size)
-        self.descent = nn.ModuleList()
+        self.in_channels = in_channels
+        self.scale = tuple(p * s ** (len(hid_channels) - 1) for p, s in zip(patch_size, stride))
 
-        for i, num_blocks in enumerate(hid_blocks):
-            blocks = nn.ModuleList()
+        self.patch = Patchify(patch_shape=patch_size)
 
+        self.in_proj = ConvNd(
+            math.prod(patch_size) * in_channels,
+            hid_channels[0],
+            spatial=spatial,
+            identity_init=identity_init,
+            **kwargs,
+        )
+
+        self.descent = nn.Sequential()
+
+        for i, (num_blocks, num_groups) in enumerate(zip(hid_blocks, hid_groups)):
             if i > 0:
+                self.descent.append(RMSNorm(dim=-spatial - 1))
+
                 if pixel_shuffle:
-                    blocks.append(
+                    self.descent.append(
                         nn.Sequential(
-                            Patchify(patch_size=stride),
+                            Patchify(patch_shape=stride),
                             ConvNd(
                                 hid_channels[i - 1] * math.prod(stride),
                                 hid_channels[i],
@@ -170,7 +129,7 @@ class ConvEncoder(nn.Module):
                         )
                     )
                 else:
-                    blocks.append(
+                    self.descent.append(
                         ConvNd(
                             hid_channels[i - 1],
                             hid_channels[i],
@@ -180,56 +139,40 @@ class ConvEncoder(nn.Module):
                             **kwargs,
                         )
                     )
-            else:
-                blocks.append(
-                    ConvNd(
-                        math.prod(patch_size) * in_channels,
-                        hid_channels[i],
-                        spatial=spatial,
-                        **kwargs,
-                    )
-                )
 
-            for _ in range(num_blocks):
-                blocks.append(
-                    ResBlock(
-                        hid_channels[i],
-                        ffn_factor=ffn_factor,
-                        spatial=spatial,
-                        dropout=dropout,
-                        checkpointing=checkpointing,
-                        **kwargs,
-                    )
+            self.descent.append(
+                ResidualTrunk(
+                    hid_channels[i],
+                    num_blocks=num_blocks,
+                    num_groups=num_groups,
+                    spatial=spatial,
+                    ffn_factor=ffn_factor,
+                    dropout=dropout,
+                    checkpointing=checkpointing,
+                    **kwargs,
                 )
+            )
 
-            if i + 1 == len(hid_blocks):
-                blocks.append(
-                    ConvNd(
-                        hid_channels[i],
-                        out_channels,
-                        spatial=spatial,
-                        identity_init=identity_init,
-                        **kwargs,
-                    )
-                )
+        self.out_norm = RMSNorm(dim=-spatial - 1)
 
-            self.descent.append(blocks)
+        self.out_proj = ConvNd(
+            hid_channels[-1],
+            out_channels,
+            spatial=spatial,
+            identity_init=identity_init,
+            **kwargs,
+        )
 
     def forward(self, x: Tensor) -> Tensor:
         r"""
         Arguments:
-            x: Input tensor, with shape (B, C_i, L_1, ..., L_N).
+            x: Input tensor (B, C_i, L_1, ..., L_N).
 
         Returns:
-            Output tensor, with shape (B, C_o, L_1 / 2^D, ..., L_N / 2^D).
+            Output tensor (B, C_o, L_1 / scale_1, ..., L_N / scale_N).
         """
-
-        x = self.patch(x)
-
-        for blocks in self.descent:
-            for block in blocks:
-                x = block(x)
-
+        x = self.descent(self.in_proj(self.patch(x)))
+        x = self.out_proj(self.out_norm(x))
         return x
 
 
@@ -239,18 +182,19 @@ class ConvDecoder(nn.Module):
     Arguments:
         in_channels: Number of input channels C_i.
         out_channels: Number of output channels C_o.
-        hid_channels: Numbers of channels at each depth.
-        hid_blocks: Numbers of hidden blocks at each depth.
+        hid_channels: Number of channels at each depth.
+        hid_blocks: Number of residual blocks at each depth.
+        hid_groups: Number of residual groups at each depth, or 0 for a flat stack.
         kernel_size: Kernel size of all convolutions.
-        stride: Stride of the downsampling convolutions.
-        pixel_shuffle: Whether to use pixel shuffling or not.
-        ffn_factor: Channel expansion factor in each FFN.
+        stride: Stride of the upsampling convolutions.
+        pixel_shuffle: Whether to upsample with pixel shuffling or not.
+        ffn_factor: Channel expansion factor in the feed-forward networks.
         spatial: Number of spatial dimensions N.
         patch_size: Patch size applied after the last convolution.
         periodic: Whether the spatial dimensions are periodic or not.
         dropout: Dropout rate in [0, 1].
         checkpointing: Whether to use gradient checkpointing or not.
-        identity_init: Initialize down/upsampling convolutions as identity.
+        identity_init: Whether to initialize projection and resampling layers as identity or not.
     """
 
     def __init__(
@@ -259,6 +203,7 @@ class ConvDecoder(nn.Module):
         out_channels: int,
         hid_channels: Sequence[int] = (64, 128, 256),
         hid_blocks: Sequence[int] = (3, 3, 3),
+        hid_groups: Optional[Sequence[int]] = None,
         kernel_size: Union[int, Sequence[int]] = 3,
         stride: Union[int, Sequence[int]] = 2,
         pixel_shuffle: bool = True,
@@ -272,55 +217,59 @@ class ConvDecoder(nn.Module):
     ) -> None:
         super().__init__()
 
-        assert len(hid_blocks) == len(hid_channels)
+        if hid_groups is None:
+            hid_groups = [0] * len(hid_channels)
 
-        if isinstance(kernel_size, int):
-            kernel_size = [kernel_size] * spatial
+        kernel_size = broadcast_to_axes(kernel_size, spatial)
+        stride = broadcast_to_axes(stride, spatial)
+        patch_size = broadcast_to_axes(patch_size, spatial)
 
-        if isinstance(stride, int):
-            stride = [stride] * spatial
+        # Security
+        assert len(hid_channels) == len(hid_blocks) == len(hid_groups), (
+            "ERROR (ConvDecoder) | hid_channels, hid_blocks and hid_groups must match in length."
+        )
 
-        if isinstance(patch_size, int):
-            patch_size = [patch_size] * spatial
+        assert all(k % 2 == 1 for k in kernel_size), (
+            "ERROR (ConvDecoder) | Kernel sizes must be odd to preserve the spatial dimensions."
+        )
 
         kwargs = dict(
-            kernel_size=tuple(kernel_size),
+            kernel_size=kernel_size,
             padding=tuple(k // 2 for k in kernel_size),
             padding_mode="circular" if periodic else "zeros",
         )
 
-        self.unpatch = Unpatchify(patch_size=patch_size)
-        self.ascent = nn.ModuleList()
+        self.scale = tuple(p * s ** (len(hid_channels) - 1) for p, s in zip(patch_size, stride))
 
-        for i, num_blocks in reversed(list(enumerate(hid_blocks))):
-            blocks = nn.ModuleList()
+        self.in_proj = ConvNd(
+            in_channels,
+            hid_channels[-1],
+            spatial=spatial,
+            identity_init=identity_init,
+            **kwargs,
+        )
 
-            if i + 1 == len(hid_blocks):
-                blocks.append(
-                    ConvNd(
-                        in_channels,
-                        hid_channels[i],
-                        spatial=spatial,
-                        identity_init=identity_init,
-                        **kwargs,
-                    )
+        self.ascent = nn.Sequential()
+
+        for i in reversed(range(len(hid_channels))):
+            self.ascent.append(
+                ResidualTrunk(
+                    hid_channels[i],
+                    num_blocks=hid_blocks[i],
+                    num_groups=hid_groups[i],
+                    spatial=spatial,
+                    ffn_factor=ffn_factor,
+                    dropout=dropout,
+                    checkpointing=checkpointing,
+                    **kwargs,
                 )
-
-            for _ in range(num_blocks):
-                blocks.append(
-                    ResBlock(
-                        hid_channels[i],
-                        ffn_factor=ffn_factor,
-                        spatial=spatial,
-                        dropout=dropout,
-                        checkpointing=checkpointing,
-                        **kwargs,
-                    )
-                )
+            )
 
             if i > 0:
+                self.ascent.append(RMSNorm(dim=-spatial - 1))
+
                 if pixel_shuffle:
-                    blocks.append(
+                    self.ascent.append(
                         nn.Sequential(
                             ConvNd(
                                 hid_channels[i],
@@ -329,13 +278,13 @@ class ConvDecoder(nn.Module):
                                 identity_init=identity_init,
                                 **kwargs,
                             ),
-                            Unpatchify(patch_size=stride),
+                            Unpatchify(patch_shape=stride),
                         )
                     )
                 else:
-                    blocks.append(
+                    self.ascent.append(
                         nn.Sequential(
-                            nn.Upsample(scale_factor=tuple(stride), mode="nearest"),
+                            nn.Upsample(scale_factor=stride, mode="nearest"),
                             ConvNd(
                                 hid_channels[i],
                                 hid_channels[i - 1],
@@ -345,175 +294,74 @@ class ConvDecoder(nn.Module):
                             ),
                         )
                     )
-            else:
-                blocks.append(
-                    ConvNd(
-                        hid_channels[i],
-                        math.prod(patch_size) * out_channels,
-                        spatial=spatial,
-                        **kwargs,
-                    )
-                )
 
-            self.ascent.append(blocks)
+        self.out_norm = RMSNorm(dim=-spatial - 1)
+
+        self.out_proj = ConvNd(
+            hid_channels[0],
+            math.prod(patch_size) * out_channels,
+            spatial=spatial,
+            identity_init=identity_init,
+            **kwargs,
+        )
+
+        self.unpatch = Unpatchify(patch_shape=patch_size)
 
     def forward(self, x: Tensor) -> Tensor:
         r"""
         Arguments:
-            x: Input tensor, with shape (B, C_i, L_1, ..., L_N).
+            x: Input tensor (B, C_i, L_1, ..., L_N).
 
         Returns:
-            Output tensor, with shape (B, C_o, L_1 * 2^D, ..., L_N * 2^D).
+            Output tensor (B, C_o, L_1 * scale_1, ..., L_N * scale_N).
         """
-
-        for blocks in self.ascent:
-            for block in blocks:
-                x = block(x)
-
-        x = self.unpatch(x)
-
+        x = self.ascent(self.in_proj(x))
+        x = self.unpatch(self.out_proj(self.out_norm(x)))
         return x
 
 
-class ConvAE(nn.Module):
-    r"""Creates a convolutional auto-encoder module.
+class ConvAE(AutoEncoder):
+    r"""Creates a Convolutional Autoencoder (CAE).
 
     Arguments:
         encoder: Encoder module.
         decoder: Decoder module.
-        saturation: Saturation function applied to latent codes.
-        saturation_bound: Bound used by the saturation function.
-        noise: Standard deviation of Gaussian noise added during decoding.
     """
 
-    def __init__(
-        self,
-        encoder: nn.Module,
-        decoder: nn.Module,
-        saturation: Optional[str] = "softclip2",
-        saturation_bound: float = 5.0,
-        noise: float = 0.0,
-    ) -> None:
-        super().__init__()
-
-        self.encoder = encoder
-        self.decoder = decoder
-
-        self.saturation = saturation
-        self.saturation_bound = saturation_bound
-        self.noise = noise
-
-    def saturate(self, x: Tensor) -> Tensor:
-        r"""Applies the configured saturation function to a tensor.
+    def latent(self, resolution: Sequence[int]) -> tuple[int, ...]:
+        r"""Computes the latent shape.
 
         Arguments:
-            x: Input tensor.
+            resolution: Spatial dimensions of the data (L_1, ..., L_N).
 
         Returns:
-            Saturated tensor, with the same shape as x.
+            shape: Latent code shape (C_z, L_1', ..., L_N').
         """
 
-        if self.saturation is None:
-            return x
-        elif self.saturation == "softclip":
-            return x / (1 + abs(x) / self.saturation_bound)
-        elif self.saturation == "softclip2":
-            return x * torch.rsqrt(1 + torch.square(x / self.saturation_bound))
-        elif self.saturation == "tanh":
-            return torch.tanh(x / self.saturation_bound) * self.saturation_bound
-        elif self.saturation == "asinh":
-            return torch.arcsinh(x)
-        elif self.saturation == "rmsnorm":
-            return x * torch.rsqrt(torch.mean(torch.square(x), dim=1, keepdim=True) + 1e-5)
-        else:
-            raise ValueError(f"unknown saturation '{self.saturation}'")
-
-    def latent_shape(self, resolution: Sequence[int]) -> Tuple[int, ...]:
-        r"""Returns the latent tensor shape for a given input resolution.
-
-        Arguments:
-            resolution: Spatial dimensions of the input image (L_1, ..., L_N).
-
-        Returns:
-            shape: Latent tensor shape (C_z, L_1', ..., L_N'), where each L_i'
-                   depends on the encoder's stride and patch size.
-        """
+        device = next(self.encoder.parameters()).device
 
         with torch.no_grad():
-            dummy = torch.zeros(1, self.encoder.in_channels, *resolution)
+            dummy = torch.zeros(1, self.encoder.in_channels, *resolution, device=device)
             z = self.encoder(dummy)
 
         return tuple(z.shape[1:])
 
-    def compression_info(self, input_shape: Sequence[int]) -> Tuple[Tuple[int, ...], int]:
-        r"""Returns the bottleneck latent shape and compression factor for a given input shape.
+    def compression(self, input_shape: Sequence[int]) -> tuple[tuple[int, ...], int]:
+        r"""Computes the compression factor of the autoencoder for a given data shape.
 
         Arguments:
-            input_shape: Full input dimensions (C, L_1, ..., L_N).
+            input_shape: Shape of the data (C, L_1, ..., L_N).
 
         Returns:
-            latent: Latent tensor shape (C_z, L_1', ..., L_N').
-            factor: Integer compression factor = prod(input_shape) // prod(latent).
+            latent: Latent code shape (C_z, L_1', ..., L_N').
+            factor: Compression factor.
         """
-
-        import math
 
         _, *resolution = input_shape
-        lat = self.latent_shape(resolution)
-        factor = math.prod(input_shape) // math.prod(lat)
+        latent = self.latent(resolution)
+        factor = math.prod(input_shape) // math.prod(latent)
 
-        return lat, factor
-
-    def encode(self, x: Tensor) -> Tensor:
-        r"""Encodes an image tensor into a latent representation.
-
-        Arguments:
-            x: Input image, with shape (B, C_i, L_1, ..., L_N).
-
-        Returns:
-            z: Latent code, with shape (B, C_z, L_1', ..., L_N').
-        """
-
-        dtype = get_module_dtype(self.encoder)
-        z = self.encoder(x.to(dtype))
-        z = self.saturate(z)
-
-        return z.to(x.dtype)
-
-    def decode(self, z: Tensor) -> Tensor:
-        r"""Decodes a latent code back into an image tensor.
-
-        Arguments:
-            z: Latent code, with shape (B, C_z, L_1', ..., L_N').
-
-        Returns:
-            x: Reconstructed image, with shape (B, C_o, L_1, ..., L_N).
-        """
-
-        dtype = get_module_dtype(self.decoder)
-
-        if self.noise > 0:
-            z = z + self.noise * torch.randn_like(z)
-
-        x = self.decoder(z.to(dtype))
-
-        return x.to(z.dtype)
-
-    def forward(self, x: Tensor) -> Tuple[Tensor, Tensor]:
-        r"""Encodes and reconstructs an image tensor.
-
-        Arguments:
-            x: Input image, with shape (B, C_i, L_1, ..., L_N).
-
-        Returns:
-            z: Latent code, with shape (B, C_z, L_1', ..., L_N').
-            y: Reconstructed image, with shape (B, C_o, L_1, ..., L_N).
-        """
-
-        z = self.encode(x)
-        y = self.decode(z)
-
-        return z, y
+        return latent, factor
 
 
 def create_ConvAE(
@@ -521,22 +369,20 @@ def create_ConvAE(
     out_channels: int,
     lat_channels: int,
     spatial: int = 2,
-    noise_level: float = 0.0,
-    saturation_bound: float = 5.0,
-    saturation: Optional[str] = "softclip2",
+    config_encoder: Optional[dict[str, Any]] = None,
+    config_decoder: Optional[dict[str, Any]] = None,
     **kwargs,
 ) -> ConvAE:
-    r"""Instantiates a convolutional auto-encoder.
+    r"""Instantiates a Convolutional Autoencoder (CAE).
 
     Arguments:
-        in_channels: Number of input channels.
-        out_channels: Number of output channels.
-        lat_channels: Number of latent channels.
-        spatial: Number of spatial dimensions.
-        noise_level: Standard deviation of Gaussian noise injected at decode time.
-        saturation_bound: Bound used by the saturation function.
-        saturation: Saturation function applied to latent codes.
-        **kwargs: Forwarded to both ConvEncoder and ConvDecoder
+        in_channels: Number of input channels C_i.
+        out_channels: Number of output channels C_o.
+        lat_channels: Number of latent channels C_z.
+        spatial: Number of spatial dimensions N.
+        config_encoder: Keyword arguments overriding kwargs for the encoder.
+        config_decoder: Keyword arguments overriding kwargs for the decoder.
+        kwargs: Keyword arguments shared by ConvEncoder and ConvDecoder.
 
     Returns:
         autoencoder: A ConvAE instance.
@@ -546,20 +392,20 @@ def create_ConvAE(
         in_channels=in_channels,
         out_channels=lat_channels,
         spatial=spatial,
-        **kwargs,
+        **{**kwargs, **(config_encoder or {})},
     )
 
     decoder = ConvDecoder(
         in_channels=lat_channels,
         out_channels=out_channels,
         spatial=spatial,
-        **kwargs,
+        **{**kwargs, **(config_decoder or {})},
     )
 
-    return ConvAE(
-        encoder,
-        decoder,
-        saturation=saturation,
-        saturation_bound=saturation_bound,
-        noise=noise_level,
+    # Security
+    assert encoder.scale == decoder.scale, (
+        f"ERROR (create_ConvAE) | Encoder downsamples by {encoder.scale} "
+        f"but decoder upsamples by {decoder.scale}."
     )
+
+    return ConvAE(encoder, decoder)

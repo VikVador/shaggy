@@ -1,31 +1,32 @@
-r"""Save and load tools for ConvAE models."""
+r"""Saving and loading tools for PyTorch models."""
 
 __all__ = [
     "save",
-    "load",
+    "load_config",
+    "load_weights",
 ]
 
 import torch
+import torch.nn as nn
 
 from omegaconf import DictConfig, OmegaConf
 from pathlib import Path
-from typing import Union
-
-from shaggy.models.cae import ConvAE, create_ConvAE
-from shaggy.utils import skip_init
+from typing import Any, Union
 
 
-def save(model: ConvAE, config: DictConfig, path: Union[str, Path]) -> None:
-    r"""Saves a ConvAE model weights and configuration to a directory.
-
-    Creates path if it does not exist, then writes config.yml (the OmegaConf
-    configuration) and model.pth (the model state dict).
+def save(
+    model: nn.Module,
+    config: Union[DictConfig, dict[str, Any]],
+    path: Union[str, Path],
+) -> None:
+    r"""Saves the weights and configuration of a model to a directory.
 
     Arguments:
-        model: The ConvAE model to save.
-        config: OmegaConf config holding the create_ConvAE keyword arguments.
-        path: Target directory.
+        model: Model to save.
+        config: Configuration of model.
+        path: Target directory in which to save the model.
     """
+
     path = Path(path)
     path.mkdir(parents=True, exist_ok=True)
 
@@ -33,28 +34,26 @@ def save(model: ConvAE, config: DictConfig, path: Union[str, Path]) -> None:
     torch.save(model.state_dict(), path / "model.pth")
 
 
-def load(path: Union[str, Path], device: str = "cpu") -> ConvAE:
-    r"""Loads a ConvAE model from a directory.
+def load_config(path: Union[str, Path]) -> DictConfig:
+    r"""Loads configuration file of a saved model."""
+    return OmegaConf.load(Path(path) / "config.yml")
+
+
+def load_weights(model: nn.Module, path: Union[str, Path], device: str = "cuda") -> nn.Module:
+    r"""Loads saved weights into a model.
 
     Arguments:
-        path: Directory containing config.yml and model.pth.
+        model: Model to load weights into.
+        path: Directory containing the saved model weights.
         device: Device to load the model onto (e.g. "cpu", "cuda").
 
     Returns:
-        model: The loaded ConvAE in eval mode.
+        model: The same model, with the saved weights, on device and in eval mode.
     """
-    path = Path(path)
 
-    if device == "cuda" and not torch.cuda.is_available():
-        device = "cpu"
+    # Checking for CUDA availability
+    device = "cpu" if device == "cuda" and not torch.cuda.is_available() else device
 
-    config = OmegaConf.load(path / "config.yml")
-
-    with skip_init():
-        model = create_ConvAE(**config)
-
-    state = torch.load(path / "model.pth", map_location=device, weights_only=True)
+    state = torch.load(Path(path) / "model.pth", map_location=device, weights_only=True)
     model.load_state_dict(state)
-    model.to(device)
-
-    return model.eval()
+    return model.to(device).eval()

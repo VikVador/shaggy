@@ -1,88 +1,43 @@
-r"""Optimizer tools and PyTorch implementation of SOAP
-
-Adapted from https://github.com/nikhilvyas/SOAP
-
-References:
-    | SOAP: Improving and Stabilizing Shampoo using Adam (Vyas et al., 2024)
-    | https://arxiv.org/abs/2409.11321
-"""
+r"""SOAP optimizer."""
 
 __all__ = [
-    "safe_gradient_step",
     "SOAP",
 ]
 
 import torch
 
-from torch import Tensor, nn
-from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
-
-
-def safe_gradient_step(
-    optimizer: torch.optim.Optimizer,
-    grad_clip: Optional[float] = None,
-    scaler: Optional[torch.cuda.amp.GradScaler] = None,
-) -> Tensor:
-    r"""Applies a gradient descent (GD) optimization step.
-
-    Arguments:
-        optimizer: An optimizer.
-        grad_clip: The maximum gradient norm.
-        scaler: A gradient scaler for AMP training.
-
-    Returns:
-        Global L2 gradient norm (before clipping), suitable for logging to wandb.
-    """
-
-    if scaler:
-        scaler.unscale_(optimizer)
-
-    params = [p for group in optimizer.param_groups for p in group["params"]]
-
-    if grad_clip is None:
-        norm = torch.linalg.vector_norm(
-            torch.stack([
-                torch.linalg.vector_norm(p.grad) for p in params if torch.is_tensor(p.grad)
-            ])
-        )
-    else:
-        norm = nn.utils.clip_grad_norm_(params, grad_clip)
-
-    if scaler:
-        scaler.step(optimizer)
-        scaler.update()
-    elif norm.isfinite():
-        optimizer.step()
-
-    optimizer.zero_grad()
-
-    return norm
+from collections.abc import Iterable
+from typing import (
+    Any,
+    Callable,
+    Optional,
+)
 
 
 class SOAP(torch.optim.Optimizer):
-    r"""SOAP optimizer combining Shampoo's preconditioning with Adam's update rule.
+    r"""
+    References:
+    | SOAP: Improving and Stabilizing Shampoo using Adam (Vyas et al., 2024)
+    | https://arxiv.org/abs/2409.11321
 
     Arguments:
-        params: The parameters to optimize.
-        lr: The learning rate.
+        params: Network parameters.
+        lr: learning rate.
         betas: Adam's beta parameters (first and second) and Shampoo's beta (third).
         eps: Adam's epsilon for numerical stability.
-        weight_decay: The weight decay coefficient.
-        precondition_frequency: The number of steps between updates of Shampoo's preconditioner.
-        precondition_warmup: The number of initial steps for which the preconditioner is always updated.
+        weight_decay: Weight decay coefficient [0, 1].
+        precondition_frequency: Number of steps between updates of Shampoo's preconditioner.
+        precondition_warmup: Number of initial steps for which the preconditioner is always updated.
         precondition_1d: Whether to precondition 1-d gradients or not.
-        max_precond_size: The maximum size for the preconditioner. If a dimension is larger than this size, it is not preconditioned.
-        merge_dims: Whether to merge the dimensions of gradients or not. For example, a gradient
-            of shape (256, 256, 3, 3) would become (256, 2304). The first dimension is never
-            merged with the others, as it is assumed to be the output dimension. This option
-            significantly increases the size of precondition matrices.
+        max_precond_size: Maximum size for the preconditioner.
+        merge_dims: Whether to merge the dimensions of gradients or not.
     """
 
     def __init__(
         self,
         params: Iterable[torch.nn.Parameter],
         lr: float = 1e-3,
-        betas: Tuple[float, float, float] = (0.9, 0.99, 0.99),
+        betas: tuple[float, float, float] = (0.9, 0.99, 0.99),
         eps: float = 1e-8,
         weight_decay: float = 0.0,
         precondition_frequency: int = 16,
@@ -105,7 +60,10 @@ class SOAP(torch.optim.Optimizer):
         super().__init__(params, defaults)
 
     @staticmethod
-    def merge_shape(shape: Tuple, max_precond_size: int = 4096) -> Tuple:
+    def merge_shape(
+        shape: tuple,
+        max_precond_size: int = 4096,
+    ) -> tuple:
         r"""Merges trailing dimensions of a shape to reduce the number of preconditioner matrices.
 
         Arguments:
@@ -234,7 +192,7 @@ class SOAP(torch.optim.Optimizer):
     def init_preconditioner(
         self,
         grad: torch.Tensor,
-        state: Dict[str, Any],
+        state: dict[str, Any],
         precondition_1d: bool = False,
         max_precond_size: int = 4096,
         merge_dims: bool = False,
@@ -273,7 +231,7 @@ class SOAP(torch.optim.Optimizer):
     def update_preconditioner(
         self,
         grad: torch.Tensor,
-        state: Dict[str, Any],
+        state: dict[str, Any],
         shampoo_beta: float = 0.99,
         precondition_frequency: int = 16,
         precondition_warmup: int = 0,
@@ -307,7 +265,10 @@ class SOAP(torch.optim.Optimizer):
             state["exp_avg"] = self.project(state["exp_avg"], state)
 
     def project(
-        self, grad: torch.Tensor, state: Dict[str, Any], back: bool = False
+        self,
+        grad: torch.Tensor,
+        state: dict[str, Any],
+        back: bool = False,
     ) -> torch.Tensor:
         r"""Projects the gradient to or from the eigenbasis of the preconditioner.
 
@@ -335,7 +296,7 @@ class SOAP(torch.optim.Optimizer):
 
         return grad.reshape(grad_shape)
 
-    def get_orthogonal_matrix(self, state: Dict[str, Any]) -> List[Optional[torch.Tensor]]:
+    def get_orthogonal_matrix(self, state: dict[str, Any]) -> list[Optional[torch.Tensor]]:
         r"""Computes the eigenbasis of the preconditioner using torch.linalg.eigh.
 
         Arguments:
@@ -363,7 +324,7 @@ class SOAP(torch.optim.Optimizer):
 
         return Q
 
-    def get_orthogonal_matrix_QR(self, state: Dict[str, Any]) -> List[Optional[torch.Tensor]]:
+    def get_orthogonal_matrix_QR(self, state: dict[str, Any]) -> list[Optional[torch.Tensor]]:
         r"""Computes the eigenbasis of the preconditioner using one power iteration and QR.
 
         More efficient than a full eigh decomposition; used for incremental updates after
@@ -393,7 +354,11 @@ class SOAP(torch.optim.Optimizer):
         return Q
 
 
-def adam(mean: torch.Tensor, var: torch.Tensor, eps: float = 1e-8) -> torch.Tensor:
+def adam(
+    mean: torch.Tensor,
+    var: torch.Tensor,
+    eps: float = 1e-8,
+) -> torch.Tensor:
     r"""Computes the Adam update: mean / sqrt(var + eps^2).
 
     Arguments:
