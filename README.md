@@ -7,9 +7,11 @@
 <p align="center"><b>T U T O R I A L S</b></p>
 <hr style="color:#808080;">
 
-- [`notebook/demo-optimizers.ipynb`](notebook/demo-optimizers.ipynb) compares the available optimizers (SOAP, HybridMA with Muon) against AdamW.
+Tutorials and test notebooks live on the [`master-demo`](https://github.com/VikVador/shaggy/tree/master-demo) branch, a copy of `master` that also holds the datasets they use:
 
-- [`notebook/demo.ipynb`](notebook/demo.ipynb) trains an asymmetric 3D `ConvAE` on real ocean data, encoder then decoder, and compares its reconstruction error to the dataset mean.
+- [`notebook/demo-optimizers.ipynb`](https://github.com/VikVador/shaggy/blob/master-demo/notebook/demo-optimizers.ipynb) compares the available optimizers (SOAP, HybridMA with Muon) against AdamW.
+
+- [`notebook/demo.ipynb`](https://github.com/VikVador/shaggy/blob/master-demo/notebook/demo.ipynb) trains an asymmetric 3D `ConvAE` on real ocean data, encoder then decoder, and compares its reconstruction error to the dataset mean.
 
 <hr style="color:#808080;">
 <p align="center"><b>I N S T A L L A T I O N</b></p>
