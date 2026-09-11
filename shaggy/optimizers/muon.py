@@ -6,7 +6,7 @@ __all__ = [
 
 import torch
 
-from typing import Iterable
+from collections.abc import Iterable
 
 
 class Muon(torch.optim.Muon):

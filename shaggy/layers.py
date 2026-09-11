@@ -10,8 +10,9 @@ import torch.nn as nn
 
 from azula.nn.layers import ConvNd, RMSNorm
 from azula.nn.utils import checkpoint
+from collections.abc import Sequence
 from torch import Tensor
-from typing import Optional, Sequence
+from typing import Optional
 
 
 class SwiGLU(nn.Module):

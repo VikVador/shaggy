@@ -26,9 +26,9 @@ def loss_reconstruction(input: Tensor, target: Tensor, weights: Optional[Tensor]
     """
 
     # Security
-    assert (
-        input.shape == target.shape
-    ), "ERROR (loss_reconstruction) | Input and target must have the same shape."
+    assert input.shape == target.shape, (
+        "ERROR (loss_reconstruction) | Input and target must have the same shape."
+    )
 
     loss = torch.pow(input - target, 2)
     loss = loss * weights if weights is not None else loss
@@ -89,9 +89,9 @@ def loss_continuous_ranked_probability_score(
     """
 
     # Security
-    assert (
-        input.shape[:1] + input.shape[2:] == target.shape
-    ), "ERROR (loss_continuous_ranked_probability_score) | Input must be (B, E, *target.shape[1:])"
+    assert input.shape[:1] + input.shape[2:] == target.shape, (
+        "ERROR (loss_continuous_ranked_probability_score) | Input must be (B, E, *target.shape[1:])"
+    )
 
     # Pointwise CRPS (B, C, L_1, ..., L_N), no reduction
     dims = " ".join(["B", "E", "C", *(f"L_{i}" for i in range(1, input.dim() - 2))])

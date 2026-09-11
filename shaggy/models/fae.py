@@ -6,8 +6,8 @@ __all__ = [
 
 import torch.nn as nn
 
+from collections.abc import Sequence
 from torch import Tensor
-from typing import List, Sequence, Tuple
 
 from shaggy.models.ae import AutoEncoder
 
@@ -37,7 +37,7 @@ class FusionAE(nn.Module):
             AutoEncoder(encoder, decoder) for encoder, decoder in zip(encoders, decoders)
         ])
 
-    def encode(self, xs: Sequence[Tensor]) -> List[Tensor]:
+    def encode(self, xs: Sequence[Tensor]) -> list[Tensor]:
         r"""Encodes each data source into its own latent representation.
 
         Arguments:
@@ -49,13 +49,13 @@ class FusionAE(nn.Module):
 
         # Security
         n_sources = len(self.autoencoders)
-        assert (
-            len(xs) == n_sources
-        ), f"ERROR (FusionAE) | Expected {n_sources} inputs, got {len(xs)}."
+        assert len(xs) == n_sources, (
+            f"ERROR (FusionAE) | Expected {n_sources} inputs, got {len(xs)}."
+        )
 
         return [autoencoder.encode(x) for autoencoder, x in zip(self.autoencoders, xs)]
 
-    def decode(self, zs: Sequence[Tensor]) -> List[Tensor]:
+    def decode(self, zs: Sequence[Tensor]) -> list[Tensor]:
         r"""Decodes each latent code back into the ambient space of its data source.
 
         Arguments:
@@ -67,13 +67,13 @@ class FusionAE(nn.Module):
 
         # Security
         n_sources = len(self.autoencoders)
-        assert (
-            len(zs) == n_sources
-        ), f"ERROR (FusionAE) | Expected {n_sources} latent codes, got {len(zs)}."
+        assert len(zs) == n_sources, (
+            f"ERROR (FusionAE) | Expected {n_sources} latent codes, got {len(zs)}."
+        )
 
         return [autoencoder.decode(z) for autoencoder, z in zip(self.autoencoders, zs)]
 
-    def forward(self, xs: Sequence[Tensor]) -> Tuple[List[Tensor], List[Tensor]]:
+    def forward(self, xs: Sequence[Tensor]) -> tuple[list[Tensor], list[Tensor]]:
         r"""Encodes and reconstructs each data source separately.
 
         Arguments:

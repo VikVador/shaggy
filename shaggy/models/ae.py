@@ -8,7 +8,6 @@ import torch.nn as nn
 
 from azula.nn.utils import get_module_dtype
 from torch import Tensor
-from typing import Tuple
 
 
 class AutoEncoder(nn.Module):
@@ -29,11 +28,11 @@ class AutoEncoder(nn.Module):
         self.encoder = encoder
         self.decoder = decoder
 
-    def latent(self, *args, **kwargs) -> Tuple[int, ...]:
+    def latent(self, *args, **kwargs) -> tuple[int, ...]:
         r"""Computes the latent shape."""
         raise NotImplementedError()
 
-    def compression(self, *args, **kwargs) -> Tuple[Tuple[int, ...], int]:
+    def compression(self, *args, **kwargs) -> tuple[tuple[int, ...], int]:
         r"""Computes the compression factor for a given data shape."""
         raise NotImplementedError()
 
@@ -65,7 +64,7 @@ class AutoEncoder(nn.Module):
         x = self.decoder(z.to(dtype))
         return x.to(z.dtype)
 
-    def forward(self, x: Tensor) -> Tuple[Tensor, Tensor]:
+    def forward(self, x: Tensor) -> tuple[Tensor, Tensor]:
         r"""Encodes and reconstructs data.
 
         Arguments:

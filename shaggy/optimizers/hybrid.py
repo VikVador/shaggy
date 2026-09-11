@@ -9,8 +9,6 @@ import torch
 from torch import nn
 from typing import (
     Any,
-    Dict,
-    List,
     Optional,
 )
 
@@ -40,9 +38,9 @@ class HybridMA:
         model: nn.Module,
         lr: float = 3e-4,
         weight_decay: float = 0.01,
-        config_muon: Optional[Dict[str, Any]] = None,
-        config_adamw: Optional[Dict[str, Any]] = None,
-        exclude_names: Optional[List[str]] = None,
+        config_muon: Optional[dict[str, Any]] = None,
+        config_adamw: Optional[dict[str, Any]] = None,
+        exclude_names: Optional[list[str]] = None,
     ) -> None:
         excluded = set(exclude_names or [])
         muon_params, adamw_params = [], []
@@ -61,7 +59,7 @@ class HybridMA:
         self.opt_adamw = torch.optim.AdamW(adamw_params, **adamw_kwargs) if adamw_params else None
 
     @property
-    def param_groups(self) -> List:
+    def param_groups(self) -> list:
         return [
             group
             for opt in (self.opt_muon, self.opt_adamw)
@@ -87,7 +85,7 @@ class HybridMA:
         if self.opt_adamw is not None:
             self.opt_adamw.zero_grad(set_to_none=set_to_none)
 
-    def state_dict(self) -> Dict[str, Any]:
+    def state_dict(self) -> dict[str, Any]:
         r"""Returns the optimizer state as a dictionary.
 
         Returns:
@@ -98,7 +96,7 @@ class HybridMA:
             "adamw": self.opt_adamw.state_dict() if self.opt_adamw is not None else None,
         }
 
-    def load_state_dict(self, state_dict: Dict[str, Any]) -> None:
+    def load_state_dict(self, state_dict: dict[str, Any]) -> None:
         r"""Loads a previously saved optimizer state.
 
         Arguments:

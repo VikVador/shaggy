@@ -12,22 +12,23 @@ import torch
 import torch.nn as nn
 
 from azula.nn.layers import ConvNd, Patchify, RMSNorm, Unpatchify
+from collections.abc import Sequence
 from torch import Tensor
-from typing import Any, Dict, Optional, Sequence, Tuple, Union
+from typing import Any, Optional, Union
 
 from shaggy.layers import ResidualTrunk
 from shaggy.models.ae import AutoEncoder
 
 
-def broadcast_to_axes(value: Union[int, Sequence[int]], spatial: int) -> Tuple[int, ...]:
+def broadcast_to_axes(value: Union[int, Sequence[int]], spatial: int) -> tuple[int, ...]:
     r"""Broadcasts an integer, or a sequence of integers, to one value per spatial axis."""
     if isinstance(value, int):
         return (value,) * spatial
 
     # Security
-    assert (
-        len(value) == spatial
-    ), f"ERROR (broadcast_to_axes) | Expected {spatial} values, one per axis, got {len(value)}."
+    assert len(value) == spatial, (
+        f"ERROR (broadcast_to_axes) | Expected {spatial} values, one per axis, got {len(value)}."
+    )
 
     return tuple(value)
 
@@ -81,13 +82,13 @@ class ConvEncoder(nn.Module):
         patch_size = broadcast_to_axes(patch_size, spatial)
 
         # Security
-        assert (
-            len(hid_channels) == len(hid_blocks) == len(hid_groups)
-        ), "ERROR (ConvEncoder) | hid_channels, hid_blocks and hid_groups must match in length."
+        assert len(hid_channels) == len(hid_blocks) == len(hid_groups), (
+            "ERROR (ConvEncoder) | hid_channels, hid_blocks and hid_groups must match in length."
+        )
 
-        assert all(
-            k % 2 == 1 for k in kernel_size
-        ), "ERROR (ConvEncoder) | Kernel sizes must be odd to preserve the spatial dimensions."
+        assert all(k % 2 == 1 for k in kernel_size), (
+            "ERROR (ConvEncoder) | Kernel sizes must be odd to preserve the spatial dimensions."
+        )
 
         kwargs = dict(
             kernel_size=kernel_size,
@@ -224,13 +225,13 @@ class ConvDecoder(nn.Module):
         patch_size = broadcast_to_axes(patch_size, spatial)
 
         # Security
-        assert (
-            len(hid_channels) == len(hid_blocks) == len(hid_groups)
-        ), "ERROR (ConvDecoder) | hid_channels, hid_blocks and hid_groups must match in length."
+        assert len(hid_channels) == len(hid_blocks) == len(hid_groups), (
+            "ERROR (ConvDecoder) | hid_channels, hid_blocks and hid_groups must match in length."
+        )
 
-        assert all(
-            k % 2 == 1 for k in kernel_size
-        ), "ERROR (ConvDecoder) | Kernel sizes must be odd to preserve the spatial dimensions."
+        assert all(k % 2 == 1 for k in kernel_size), (
+            "ERROR (ConvDecoder) | Kernel sizes must be odd to preserve the spatial dimensions."
+        )
 
         kwargs = dict(
             kernel_size=kernel_size,
@@ -327,7 +328,7 @@ class ConvAE(AutoEncoder):
         decoder: Decoder module.
     """
 
-    def latent(self, resolution: Sequence[int]) -> Tuple[int, ...]:
+    def latent(self, resolution: Sequence[int]) -> tuple[int, ...]:
         r"""Computes the latent shape.
 
         Arguments:
@@ -345,7 +346,7 @@ class ConvAE(AutoEncoder):
 
         return tuple(z.shape[1:])
 
-    def compression(self, input_shape: Sequence[int]) -> Tuple[Tuple[int, ...], int]:
+    def compression(self, input_shape: Sequence[int]) -> tuple[tuple[int, ...], int]:
         r"""Computes the compression factor of the autoencoder for a given data shape.
 
         Arguments:
@@ -368,8 +369,8 @@ def create_ConvAE(
     out_channels: int,
     lat_channels: int,
     spatial: int = 2,
-    config_encoder: Optional[Dict[str, Any]] = None,
-    config_decoder: Optional[Dict[str, Any]] = None,
+    config_encoder: Optional[dict[str, Any]] = None,
+    config_decoder: Optional[dict[str, Any]] = None,
     **kwargs,
 ) -> ConvAE:
     r"""Instantiates a Convolutional Autoencoder (CAE).

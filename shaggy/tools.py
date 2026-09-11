@@ -11,12 +11,12 @@ import torch.nn as nn
 
 from omegaconf import DictConfig, OmegaConf
 from pathlib import Path
-from typing import Any, Dict, Union
+from typing import Any, Union
 
 
 def save(
     model: nn.Module,
-    config: Union[DictConfig, Dict[str, Any]],
+    config: Union[DictConfig, dict[str, Any]],
     path: Union[str, Path],
 ) -> None:
     r"""Saves the weights and configuration of a model to a directory.

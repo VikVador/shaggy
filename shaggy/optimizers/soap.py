@@ -6,14 +6,11 @@ __all__ = [
 
 import torch
 
+from collections.abc import Iterable
 from typing import (
     Any,
     Callable,
-    Dict,
-    Iterable,
-    List,
     Optional,
-    Tuple,
 )
 
 
@@ -40,7 +37,7 @@ class SOAP(torch.optim.Optimizer):
         self,
         params: Iterable[torch.nn.Parameter],
         lr: float = 1e-3,
-        betas: Tuple[float, float, float] = (0.9, 0.99, 0.99),
+        betas: tuple[float, float, float] = (0.9, 0.99, 0.99),
         eps: float = 1e-8,
         weight_decay: float = 0.0,
         precondition_frequency: int = 16,
@@ -64,9 +61,9 @@ class SOAP(torch.optim.Optimizer):
 
     @staticmethod
     def merge_shape(
-        shape: Tuple,
+        shape: tuple,
         max_precond_size: int = 4096,
-    ) -> Tuple:
+    ) -> tuple:
         r"""Merges trailing dimensions of a shape to reduce the number of preconditioner matrices.
 
         Arguments:
@@ -195,7 +192,7 @@ class SOAP(torch.optim.Optimizer):
     def init_preconditioner(
         self,
         grad: torch.Tensor,
-        state: Dict[str, Any],
+        state: dict[str, Any],
         precondition_1d: bool = False,
         max_precond_size: int = 4096,
         merge_dims: bool = False,
@@ -234,7 +231,7 @@ class SOAP(torch.optim.Optimizer):
     def update_preconditioner(
         self,
         grad: torch.Tensor,
-        state: Dict[str, Any],
+        state: dict[str, Any],
         shampoo_beta: float = 0.99,
         precondition_frequency: int = 16,
         precondition_warmup: int = 0,
@@ -270,7 +267,7 @@ class SOAP(torch.optim.Optimizer):
     def project(
         self,
         grad: torch.Tensor,
-        state: Dict[str, Any],
+        state: dict[str, Any],
         back: bool = False,
     ) -> torch.Tensor:
         r"""Projects the gradient to or from the eigenbasis of the preconditioner.
@@ -299,7 +296,7 @@ class SOAP(torch.optim.Optimizer):
 
         return grad.reshape(grad_shape)
 
-    def get_orthogonal_matrix(self, state: Dict[str, Any]) -> List[Optional[torch.Tensor]]:
+    def get_orthogonal_matrix(self, state: dict[str, Any]) -> list[Optional[torch.Tensor]]:
         r"""Computes the eigenbasis of the preconditioner using torch.linalg.eigh.
 
         Arguments:
@@ -327,7 +324,7 @@ class SOAP(torch.optim.Optimizer):
 
         return Q
 
-    def get_orthogonal_matrix_QR(self, state: Dict[str, Any]) -> List[Optional[torch.Tensor]]:
+    def get_orthogonal_matrix_QR(self, state: dict[str, Any]) -> list[Optional[torch.Tensor]]:
         r"""Computes the eigenbasis of the preconditioner using one power iteration and QR.
 
         More efficient than a full eigh decomposition; used for incremental updates after
