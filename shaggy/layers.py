@@ -71,11 +71,11 @@ class ResidualBlock(nn.Module):
         self.ffn = nn.Sequential(
             ConvNd(
                 channels,
-                channels * ffn_factor * 2,  # Doubles for SwiGLU
+                channels * ffn_factor,
                 spatial=spatial,
                 **kwargs,
             ),
-            SwiGLU(spatial=spatial),
+            nn.SiLU(),
             nn.Identity() if dropout is None else nn.Dropout(dropout),
             ConvNd(
                 channels * ffn_factor,
