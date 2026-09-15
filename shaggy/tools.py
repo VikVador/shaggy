@@ -12,7 +12,7 @@ import torch.nn as nn
 
 from omegaconf import DictConfig, OmegaConf
 from pathlib import Path
-from typing import Any, Union, type
+from typing import Any, Union
 
 
 def save(
