@@ -2,6 +2,7 @@ r"""Saving and loading tools for PyTorch models."""
 
 __all__ = [
     "save",
+    "load",
     "load_config",
     "load_weights",
 ]
@@ -11,7 +12,7 @@ import torch.nn as nn
 
 from omegaconf import DictConfig, OmegaConf
 from pathlib import Path
-from typing import Any, Union
+from typing import Any, Type, Union
 
 
 def save(
@@ -57,3 +58,19 @@ def load_weights(model: nn.Module, path: Union[str, Path], device: str = "cuda")
     state = torch.load(Path(path) / "model.pth", map_location=device, weights_only=True)
     model.load_state_dict(state)
     return model.to(device).eval()
+
+
+def load(path: Union[str, Path], model_cls: Type[nn.Module], device: str = "cuda") -> nn.Module:
+    r"""Loads a model of a given class from a saved checkpoint.
+
+    Arguments:
+        path: Directory containing the saved model checkpoint.
+        model_cls: Class to instantiate from the saved configuration.
+        device: Device to load the model onto (e.g. "cpu", "cuda").
+
+    Returns:
+        model: The reconstructed model, with the saved weights, on device and in eval mode.
+    """
+
+    config = load_config(path)
+    return load_weights(model_cls(**config), path, device=device)
