@@ -11,6 +11,8 @@
 
 - [`notebook/demo.ipynb`](notebook/demo.ipynb) trains an asymmetric 3D `ConvAE` on real ocean data, encoder then decoder, and compares its reconstruction error to the dataset mean.
 
+- [`notebook/demo-gradients.ipynb`](notebook/demo-gradients.ipynb) measures the GPU memory taken by one gradient of a 3D and a 2D encoder, on random data with the shape of the full domain, with a simple loss and with the GME.
+
 <hr style="color:#808080;">
 <p align="center"><b>I N S T A L L A T I O N</b></p>
 <hr style="color:#808080;">
