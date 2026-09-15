@@ -8,6 +8,12 @@ __all__ = [
 ]
 
 from .gradients import safe_gradient_step
-from .hybrid import HybridMA
-from .muon import Muon
 from .soap import SOAP
+
+try:
+    from .hybrid import HybridMA
+    from .muon import Muon
+except AttributeError:
+    # Muon subclasses torch.optim.Muon, only available in newer PyTorch releases.
+    HybridMA = None
+    Muon = None
