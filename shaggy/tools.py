@@ -12,7 +12,7 @@ import torch.nn as nn
 
 from omegaconf import DictConfig, OmegaConf
 from pathlib import Path
-from typing import Any, Type, Union
+from typing import Any, Union, type
 
 
 def save(
@@ -40,7 +40,11 @@ def load_config(path: Union[str, Path]) -> DictConfig:
     return OmegaConf.load(Path(path) / "config.yml")
 
 
-def load_weights(model: nn.Module, path: Union[str, Path], device: str = "cuda") -> nn.Module:
+def load_weights(
+    model: nn.Module,
+    path: Union[str, Path],
+    device: str = "cuda",
+) -> nn.Module:
     r"""Loads saved weights into a model.
 
     Arguments:
@@ -60,7 +64,11 @@ def load_weights(model: nn.Module, path: Union[str, Path], device: str = "cuda")
     return model.to(device).eval()
 
 
-def load(path: Union[str, Path], model_cls: Type[nn.Module], device: str = "cuda") -> nn.Module:
+def load(
+    path: Union[str, Path],
+    model_cls: type[nn.Module],
+    device: str = "cuda",
+) -> nn.Module:
     r"""Loads a model of a given class from a saved checkpoint.
 
     Arguments:
