@@ -46,7 +46,7 @@ class ConvEncoder(nn.Module):
         stride: Stride of the downsampling convolutions.
         pixel_shuffle: Whether to downsample with pixel shuffling or not.
         ffn_factor: Channel expansion factor in the feed-forward networks.
-        mod_features: Number of modulating features D, or 0 to disable the modulation.
+        mod_features: Number of modulating features D, or None to disable the modulation.
         spatial: Number of spatial dimensions N.
         patch_size: Patch size applied before the first convolution.
         periodic: Whether the spatial dimensions are periodic or not.
@@ -66,7 +66,7 @@ class ConvEncoder(nn.Module):
         stride: Union[int, Sequence[int]] = 2,
         pixel_shuffle: bool = True,
         ffn_factor: int = 1,
-        mod_features: int = 0,
+        mod_features: Optional[int] = None,
         spatial: int = 2,
         patch_size: Union[int, Sequence[int]] = 1,
         periodic: bool = False,
@@ -195,7 +195,7 @@ class ConvDecoder(nn.Module):
         stride: Stride of the upsampling convolutions.
         pixel_shuffle: Whether to upsample with pixel shuffling or not.
         ffn_factor: Channel expansion factor in the feed-forward networks.
-        mod_features: Number of modulating features D, or 0 to disable the modulation.
+        mod_features: Number of modulating features D, or None to disable the modulation.
         spatial: Number of spatial dimensions N.
         patch_size: Patch size applied after the last convolution.
         periodic: Whether the spatial dimensions are periodic or not.
@@ -215,7 +215,7 @@ class ConvDecoder(nn.Module):
         stride: Union[int, Sequence[int]] = 2,
         pixel_shuffle: bool = True,
         ffn_factor: int = 1,
-        mod_features: int = 0,
+        mod_features: Optional[int] = None,
         spatial: int = 2,
         patch_size: Union[int, Sequence[int]] = 1,
         periodic: bool = False,

@@ -22,7 +22,7 @@ class FRMSNorm(RMSNorm):
 
     The features are normalized, then scaled and shifted by a modulation vector, as
     gamma(z) * x / rms(x) + beta(z), where gamma and beta are linear functions of z. With
-    mod_features = 0, the layer is a plain RMS normalization and ignores z.
+    mod_features = None, the layer is a plain RMS normalization and ignores z.
 
     References:
         | Scalable Diffusion Models with Transformers (Peebles et al., 2022)
@@ -32,7 +32,7 @@ class FRMSNorm(RMSNorm):
 
     Arguments:
         channels: Number of channels C.
-        mod_features: Number of modulating features D, or 0 to disable the modulation.
+        mod_features: Number of modulating features D, or None to disable the modulation.
         spatial: Number of spatial dimensions N.
         eps: Numerical stability term.
     """
@@ -42,7 +42,7 @@ class FRMSNorm(RMSNorm):
     def __init__(
         self,
         channels: int,
-        mod_features: int = 0,
+        mod_features: Optional[int] = None,
         spatial: int = 2,
         eps: float = 1e-5,
     ) -> None:
@@ -50,7 +50,7 @@ class FRMSNorm(RMSNorm):
 
         self.spatial = spatial
 
-        if mod_features > 0:
+        if mod_features:
             self.proj = nn.Linear(mod_features, 2 * channels)
 
             # Identity initialization
@@ -113,7 +113,7 @@ class ResidualBlock(nn.Module):
     Arguments:
         channels: Number of channels C.
         ffn_factor: Channel expansion factor in the feed-forward network.
-        mod_features: Number of modulating features D, or 0 to disable the modulation.
+        mod_features: Number of modulating features D, or None to disable the modulation.
         spatial: Number of spatial dimensions N.
         dropout: Dropout rate in [0, 1].
         checkpointing: Whether to use gradient checkpointing or not.
@@ -126,7 +126,7 @@ class ResidualBlock(nn.Module):
         self,
         channels: int,
         ffn_factor: int = 1,
-        mod_features: int = 0,
+        mod_features: Optional[int] = None,
         spatial: int = 2,
         dropout: Optional[float] = None,
         checkpointing: bool = False,
@@ -233,7 +233,7 @@ class ResidualTrunk(nn.Module):
         num_groups: Number of residual groups, or 0 for a flat stack.
         spatial: Number of spatial dimensions N.
         ffn_factor: Channel expansion factor in the feed-forward networks.
-        mod_features: Number of modulating features D, or 0 to disable the modulation.
+        mod_features: Number of modulating features D, or None to disable the modulation.
         dropout: Dropout rate in [0, 1].
         checkpointing: Whether to use gradient checkpointing or not.
         kwargs: Keyword arguments passed to convolutional layers.
@@ -248,7 +248,7 @@ class ResidualTrunk(nn.Module):
         num_groups: int,
         spatial: int = 2,
         ffn_factor: int = 1,
-        mod_features: int = 0,
+        mod_features: Optional[int] = None,
         dropout: Optional[float] = None,
         checkpointing: bool = False,
         **kwargs,
