@@ -67,6 +67,7 @@ class AutoEncoder(nn.Module):
         dtype = get_module_dtype(self.decoder)
         args = () if mod is None else (mod,)
         x = self.decoder(z.to(dtype), *args)
+
         return x.to(z.dtype)
 
     def forward(self, x: Tensor, mod: Optional[Tensor] = None) -> tuple[Tensor, Tensor]:
@@ -85,5 +86,4 @@ class AutoEncoder(nn.Module):
 
         z = self.encode(x)
         y = self.decode(z, mod)
-
         return z, y

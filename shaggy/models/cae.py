@@ -326,8 +326,10 @@ class ConvDecoder(nn.Module):
         Returns:
             Output tensor (B, C_o, L_1 * scale_1, ..., L_N * scale_N).
         """
+
         x = self.ascent(self.in_proj(x), mod)
         x = self.unpatch(self.out_proj(self.out_norm(x, mod)))
+
         return x
 
 

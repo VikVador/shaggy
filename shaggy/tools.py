@@ -30,7 +30,6 @@ def save(
 
     path = Path(path)
     path.mkdir(parents=True, exist_ok=True)
-
     OmegaConf.save(config, path / "config.yml")
     torch.save(model.state_dict(), path / "model.pth")
 
@@ -44,7 +43,6 @@ def load_config(path: Union[str, Path]) -> DictConfig:
     Returns:
         config: Configuration of model.
     """
-
     return OmegaConf.load(Path(path) / "config.yml")
 
 
@@ -61,15 +59,15 @@ def load_weights(
         device: Device to load the model onto (e.g. "cpu", "cuda").
 
     Returns:
-        model: The same model, with the saved weights, on device and in eval mode.
+        model: Same model, with the saved weights, on device and in eval mode.
     """
 
-    # Checking for CUDA availability
     device = "cpu" if device == "cuda" and not torch.cuda.is_available() else device
-
     state = torch.load(Path(path) / "model.pth", map_location=device, weights_only=True)
     model.load_state_dict(state)
-    return model.to(device).eval()
+    model.to(device).eval()
+
+    return model
 
 
 def load(
@@ -87,6 +85,4 @@ def load(
     Returns:
         model: The reconstructed model, with the saved weights, on device and in eval mode.
     """
-
-    config = load_config(path)
-    return load_weights(model_cls(**config), path, device=device)
+    return load_weights(model_cls(**load_config(path)), path, device=device)
