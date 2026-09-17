@@ -178,6 +178,7 @@ class ConvEncoder(nn.Module):
         """
         x = self.descent(self.in_proj(self.patch(x)), mod)
         x = self.out_proj(self.out_norm(x, mod))
+
         return x
 
 

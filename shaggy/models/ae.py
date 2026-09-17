@@ -51,6 +51,7 @@ class AutoEncoder(nn.Module):
         dtype = get_module_dtype(self.encoder)
         args = () if mod is None else (mod,)
         z = self.encoder(x.to(dtype), *args)
+
         return z.to(x.dtype)
 
     def decode(self, z: Tensor, mod: Optional[Tensor] = None) -> Tensor:
@@ -86,4 +87,5 @@ class AutoEncoder(nn.Module):
 
         z = self.encode(x)
         y = self.decode(z, mod)
+
         return z, y
