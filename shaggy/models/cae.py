@@ -8,7 +8,6 @@ __all__ = [
 ]
 
 import math
-import torch
 import torch.nn as nn
 
 from azula.nn.layers import ConvNd, Patchify, Unpatchify
@@ -350,13 +349,11 @@ class ConvAE(AutoEncoder):
             shape: Latent code shape (C_z, L_1', ..., L_N').
         """
 
-        device = next(self.encoder.parameters()).device
-
-        with torch.no_grad():
-            dummy = torch.zeros(1, self.encoder.in_channels, *resolution, device=device)
-            z = self.encoder(dummy)
-
-        return tuple(z.shape[1:])
+        # The encoder divides each spatial dimension by its own scale
+        return (
+            self.encoder.out_proj.out_channels,
+            *(length // scale for length, scale in zip(resolution, self.encoder.scale)),
+        )
 
     def compression(self, input_shape: Sequence[int]) -> tuple[tuple[int, ...], int]:
         r"""Computes the compression factor of the autoencoder for a given data shape.

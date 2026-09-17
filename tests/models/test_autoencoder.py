@@ -293,3 +293,26 @@ def test_cae_modulation_preserves_shapes(spatial: int) -> None:
     _, y = model(x, torch.randn(2, 4))
 
     assert y.shape == x.shape
+
+
+@pytest.mark.parametrize("kernel_size", [1, 3, 5])
+@pytest.mark.parametrize("stride", [2, 3])
+@pytest.mark.parametrize("patch_size", [1, 2])
+def test_cae_latent_matches_a_forward_pass(kernel_size: int, stride: int, patch_size: int) -> None:
+    r"""Determines if the latent shape read from the scale is the one a real encoding gives."""
+    resolution = (36,) * 2
+    model = create_ConvAE(
+        2,
+        2,
+        4,
+        hid_channels=[4, 8],
+        hid_blocks=[1, 1],
+        kernel_size=kernel_size,
+        stride=stride,
+        patch_size=patch_size,
+    )
+
+    with torch.no_grad():
+        encoded = model.encoder(torch.zeros(1, 2, *resolution))
+
+    assert model.latent(resolution) == tuple(encoded.shape[1:])
