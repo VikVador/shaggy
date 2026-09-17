@@ -242,3 +242,20 @@ def test_loss_crps_gradients() -> None:
     assert x.grad is not None
     assert torch.all(torch.isfinite(x.grad))
     assert torch.all(x.grad.flatten(2).abs().sum(dim=-1) > 0)
+
+
+def test_loss_geometry_embedding_small_distances() -> None:
+    r"""Determines if the cost stays accurate when samples are very close to each other."""
+    x = torch.randn(8, 64, dtype=torch.float64) * 1e-4
+    z = torch.randn(8, 16, dtype=torch.float64) * 1e-4
+
+    reference = loss_geometry_embedding(x, z)
+    single = loss_geometry_embedding(x.float(), z.float())
+
+    assert single.item() == pytest.approx(reference.item(), rel=1e-5)
+
+
+def test_loss_geometry_embedding_single_sample() -> None:
+    r"""Determines if a batch with nothing to pair is rejected, instead of returning NaN."""
+    with pytest.raises(AssertionError, match="at least 2 samples"):
+        loss_geometry_embedding(torch.randn(1, 6), torch.randn(1, 3))

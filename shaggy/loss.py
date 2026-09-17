@@ -13,7 +13,11 @@ from torch import Tensor
 from typing import Optional
 
 
-def loss_reconstruction(input: Tensor, target: Tensor, weights: Optional[Tensor] = None) -> Tensor:
+def loss_reconstruction(
+    input: Tensor,
+    target: Tensor,
+    weights: Optional[Tensor] = None,
+) -> Tensor:
     r"""Computes the (optionally weighted) mean squared error between input and target.
 
     Arguments:
@@ -32,6 +36,7 @@ def loss_reconstruction(input: Tensor, target: Tensor, weights: Optional[Tensor]
 
     loss = (input - target).square()
     loss = loss * weights if weights is not None else loss
+
     return loss.mean()
 
 
@@ -50,6 +55,12 @@ def loss_geometry_embedding(x: Tensor, z: Tensor) -> Tensor:
         loss: Scalar GME cost.
     """
 
+    # Security
+    batch = len(x)
+    assert batch > 1, (
+        f"ERROR (loss_geometry_embedding) | Expected at least 2 samples to pair, got {batch}."
+    )
+
     # Distances are computed between flattened samples
     if z.dim() > 2:
         z = z.flatten(1)
@@ -60,12 +71,11 @@ def loss_geometry_embedding(x: Tensor, z: Tensor) -> Tensor:
     dx2 = torch.cdist(x, x).square()
     dz2 = torch.cdist(z, z).square()
 
-    # Compute Gromov-Monge cost
-    cost = torch.log((1.0 + dz2) / (1.0 + dx2)).square()
+    # Compute Gromov-Monge cost, log1p stays accurate for small distances
+    cost = (torch.log1p(dz2) - torch.log1p(dx2)).square()
 
-    # Removing self-distances from the cost matrix
-    off_diag = ~torch.eye(cost.shape[0], dtype=torch.bool, device=cost.device)
-    return cost[off_diag].mean()
+    # Self-distances cost exactly zero, hence the sum over the batch * (batch - 1) pairs
+    return cost.sum() / (batch * (batch - 1))
 
 
 def loss_continuous_ranked_probability_score(
@@ -93,9 +103,8 @@ def loss_continuous_ranked_probability_score(
         "ERROR (loss_continuous_ranked_probability_score) | Input must be (B, E, *target.shape[1:])"
     )
 
-    # Pointwise CRPS (B, C, L_1, ..., L_N), no reduction
     dims = " ".join(["B", "E", "C", *(f"L_{i}" for i in range(1, input.dim() - 2))])
     loss = continuous_ranked_probability_score(target, input, dims=dims, ensemble="E", reduce="")
-
     loss = loss * weights if weights is not None else loss
+
     return loss.mean()
