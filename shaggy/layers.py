@@ -75,11 +75,10 @@ class FRMSNorm(RMSNorm):
             return x
 
         # One value per channel, broadcast over every spatial position
-        gamma, beta = self.proj(mod).unflatten(-1, (2, -1)).unbind(-2)
-        gamma = gamma.reshape(*gamma.shape, *(1,) * self.spatial)
-        beta = beta.reshape(*beta.shape, *(1,) * self.spatial)
+        gamma, beta = self.proj(mod).chunk(2, dim=-1)
+        shape = (*gamma.shape, *(1,) * self.spatial)
 
-        return (1 + gamma) * x + beta
+        return (1 + gamma.reshape(shape)) * x + beta.reshape(shape)
 
 
 class ModulatedSequential(nn.Sequential):
@@ -225,7 +224,7 @@ class ResidualGroup(nn.Module):
 
 
 class ResidualTrunk(nn.Module):
-    r"""Creates a (convolutional) residuals within residuals block module.
+    r"""Creates the residual trunk of a single depth.
 
     Arguments:
         channels: Number of channels C.

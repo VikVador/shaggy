@@ -30,7 +30,7 @@ def loss_reconstruction(input: Tensor, target: Tensor, weights: Optional[Tensor]
         "ERROR (loss_reconstruction) | Input and target must have the same shape."
     )
 
-    loss = torch.pow(input - target, 2)
+    loss = (input - target).square()
     loss = loss * weights if weights is not None else loss
     return loss.mean()
 
@@ -39,29 +39,29 @@ def loss_geometry_embedding(x: Tensor, z: Tensor) -> Tensor:
     r"""Computes the Gromov-Monge Embedding (GME) loss between ambient data and latent codes.
 
     References:
-         | Geometry-preserving encoder/decoder in latent generative models (Lee, 2026)
-         | https://arxiv.org/abs/2501.09876
+        | Geometry-preserving encoder/decoder in latent generative models (Lee, 2026)
+        | https://arxiv.org/abs/2501.09876
 
-     Arguments:
-         x: Ambient data (B, C, L_1, ..., L_N).
-         z: Latent codes (B, C*, L_1*, ..., L_N*).
+    Arguments:
+        x: Ambient data (B, C, L_1, ..., L_N).
+        z: Latent codes (B, C*, L_1*, ..., L_N*).
 
-     Returns:
-         loss: Scalar GME cost.
+    Returns:
+        loss: Scalar GME cost.
     """
 
-    # Security
+    # Distances are computed between flattened samples
     if z.dim() > 2:
         z = z.flatten(1)
     if x.dim() > 2:
         x = x.flatten(1)
 
     # Compute pairwise squared distances
-    dx2 = torch.pow(torch.cdist(x, x), 2)
-    dz2 = torch.pow(torch.cdist(z, z), 2)
+    dx2 = torch.cdist(x, x).square()
+    dz2 = torch.cdist(z, z).square()
 
     # Compute Gromov-Monge cost
-    cost = torch.pow(torch.log((1.0 + dz2) / (1.0 + dx2)), 2)
+    cost = torch.log((1.0 + dz2) / (1.0 + dx2)).square()
 
     # Removing self-distances from the cost matrix
     off_diag = ~torch.eye(cost.shape[0], dtype=torch.bool, device=cost.device)

@@ -36,7 +36,15 @@ def save(
 
 
 def load_config(path: Union[str, Path]) -> DictConfig:
-    r"""Loads configuration file of a saved model."""
+    r"""Loads the configuration of a saved model.
+
+    Arguments:
+        path: Directory containing the saved model configuration.
+
+    Returns:
+        config: Configuration of model.
+    """
+
     return OmegaConf.load(Path(path) / "config.yml")
 
 

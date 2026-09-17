@@ -10,7 +10,8 @@ from collections.abc import Iterable
 
 
 class Muon(torch.optim.Muon):
-    r"""
+    r"""Creates a Muon optimizer.
+
     References:
         | Muon: An optimizer for hidden layers in neural networks (Jordan, 2024)
         | https://kellerjordan.github.io/posts/muon/
@@ -36,6 +37,3 @@ class Muon(torch.optim.Muon):
             weight_decay=weight_decay,
             adjust_lr_fn="match_rms_adamw",
         )
-
-        # Security
-        assert all(p.ndim == 2 for p in params), "ERROR - Muon only supports 2D parameters."

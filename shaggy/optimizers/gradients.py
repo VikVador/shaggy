@@ -16,7 +16,7 @@ from typing import Optional
 def safe_gradient_step(
     optimizer: torch.optim.Optimizer,
     grad_clip: Optional[float] = None,
-    scaler: Optional[torch.cuda.amp.GradScaler] = None,
+    scaler: Optional[torch.amp.GradScaler] = None,
 ) -> Tensor:
     r"""Applies a gradient descent optimization step.
 
@@ -26,7 +26,7 @@ def safe_gradient_step(
         scaler: A gradient scaler for automatic mixed precision training.
 
     Returns:
-        Global gradient norm (before clipping).
+        norm: Global gradient norm, before clipping.
     """
 
     if scaler:
