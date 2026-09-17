@@ -39,13 +39,15 @@ def test_frmsnorm_preserves_shape(spatial: int, mod_features: int) -> None:
 
 
 @pytest.mark.parametrize("mod", [None, torch.randn(2, 4)])
-def test_frmsnorm_without_modulation(mod: torch.Tensor) -> None:
+@pytest.mark.parametrize("mod_features", [None, 0])
+def test_frmsnorm_without_modulation(mod: torch.Tensor, mod_features: int) -> None:
     r"""Determines if it reduces to azula's RMSNorm without features, or without a vector."""
     x = torch.randn(2, 8, 6, 6)
 
     reference = RMSNorm(dim=-3)(x)
 
-    assert torch.allclose(FRMSNorm(8, mod_features=0, spatial=2)(x, mod), reference)
+    assert FRMSNorm(8, mod_features=mod_features, spatial=2).proj is None
+    assert torch.allclose(FRMSNorm(8, mod_features=mod_features, spatial=2)(x, mod), reference)
     assert torch.allclose(FRMSNorm(8, mod_features=4, spatial=2)(x, None), reference)
 
 
