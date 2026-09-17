@@ -60,6 +60,7 @@ class HybridMA:
 
     @property
     def param_groups(self) -> list:
+        r"""Returns the parameter groups of both sub-optimizers."""
         return [
             group
             for opt in (self.opt_muon, self.opt_adamw)
