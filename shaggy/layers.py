@@ -1,6 +1,7 @@
 r"""Building blocks for Autoencoders."""
 
 __all__ = [
+    "FRMSNorm",
     "ResidualBlock",
     "ResidualGroup",
     "ResidualTrunk",
@@ -15,32 +16,67 @@ from torch import Tensor
 from typing import Optional
 
 
-class SwiGLU(nn.Module):
-    r"""Creates a (channel-wise) SwiGLU activation layer.
+class FRMSNorm(RMSNorm):
+    r"""Creates a functional RMS normalization layer.
+
+    The features are normalized, then scaled and shifted by a modulation vector, as
+    gamma(z) * x / rms(x) + beta(z), where gamma and beta are linear functions of z. With
+    mod_features = 0, the layer is a plain RMS normalization and ignores z.
 
     References:
-        | GLU Variants Improve Transformer (Shazeer, 2020)
-        | https://arxiv.org/abs/2002.05202
+        | Scalable Diffusion Models with Transformers (Peebles et al., 2022)
+        | https://arxiv.org/abs/2212.09748
+        | Skillful joint probabilistic weather forecasting from marginals (Alet et al., 2025)
+        | https://arxiv.org/abs/2506.10772
 
     Arguments:
+        channels: Number of channels C.
+        mod_features: Number of modulating features D, or 0 to disable the modulation.
         spatial: Number of spatial dimensions N.
+        eps: Numerical stability term.
     """
 
-    def __init__(self, spatial: int = 2) -> None:
-        super().__init__()
+    def __init__(
+        self,
+        channels: int,
+        mod_features: int = 0,
+        spatial: int = 2,
+        eps: float = 1e-5,
+    ) -> None:
+        super().__init__(dim=-spatial - 1, eps=eps)
 
-        self.dim = -spatial - 1
+        self.spatial = spatial
 
-    def forward(self, x: Tensor) -> Tensor:
+        if mod_features > 0:
+            self.proj = nn.Linear(mod_features, 2 * channels)
+
+            # Identity initialization
+            self.proj.weight.data.mul_(1e-2)
+            self.proj.bias.data.zero_()
+        else:
+            self.proj = None
+
+    def forward(self, x: Tensor, mod: Optional[Tensor] = None) -> Tensor:
         r"""
         Arguments:
-            x: Input tensor (B, 2C, ...).
+            x: Input tensor (B, C, L_1, ..., L_N).
+            mod: Modulation vector (B, D), shared by all spatial positions.
 
         Returns:
-            Output tensor (B, C, ...).
+            Output tensor (B, C, L_1, ..., L_N).
         """
-        x1, x2 = x.unflatten(self.dim, (-1, 2)).unbind(self.dim)
-        return x1 * nn.functional.silu(x2)
+
+        x = super().forward(x)
+
+        if self.proj is None or mod is None:
+            return x
+
+        # One value per channel, broadcast over every spatial position
+        gamma, beta = self.proj(mod).unflatten(-1, (2, -1)).unbind(-2)
+        gamma = gamma.reshape(*gamma.shape, *(1,) * self.spatial)
+        beta = beta.reshape(*beta.shape, *(1,) * self.spatial)
+
+        return (1 + gamma) * x + beta
 
 
 class ResidualBlock(nn.Module):

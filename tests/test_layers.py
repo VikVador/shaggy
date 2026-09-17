@@ -1,12 +1,12 @@
-r"""Tests for Shaggy layers: SwiGLU, ResidualBlock, ResidualGroup, ResidualTrunk."""
+r"""Tests for Shaggy layers: FRMSNorm, ResidualBlock, ResidualGroup, ResidualTrunk."""
 
 import pytest
 import torch
 import torch.nn as nn
 
-from azula.nn.layers import swiglu
+from azula.nn.layers import RMSNorm
 
-from shaggy.layers import ResidualBlock, ResidualGroup, ResidualTrunk, SwiGLU
+from shaggy.layers import FRMSNorm, ResidualBlock, ResidualGroup, ResidualTrunk
 
 CONV = dict(kernel_size=3, padding=1)
 
@@ -25,33 +25,90 @@ def relative_deviation(y: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
     return (y - x).pow(2).mean().sqrt() / x.pow(2).mean().sqrt()
 
 
-# --- SwiGLU ---
+# --- FRMSNorm ---
 
 
-@pytest.mark.parametrize("spatial", [0, 1, 2, 3])
-def test_swiglu_halves_channels(spatial: int) -> None:
-    r"""Determines if the channel dimension is halved while the spatial ones are kept."""
-    x = torch.randn(2, 6, *[4] * spatial)
+@pytest.mark.parametrize("spatial", [1, 2, 3])
+@pytest.mark.parametrize("mod_features", [0, 4])
+def test_frmsnorm_preserves_shape(spatial: int, mod_features: int) -> None:
+    r"""Determines if the output has the shape of the input, modulated or not."""
+    norm = FRMSNorm(8, mod_features=mod_features, spatial=spatial)
+    x = torch.randn(2, 8, *[6] * spatial)
 
-    assert SwiGLU(spatial=spatial)(x).shape == (2, 3, *[4] * spatial)
-
-
-@pytest.mark.parametrize("spatial", [0, 1, 2, 3])
-def test_swiglu_matches_azula(spatial: int) -> None:
-    r"""Determines if it equals azula's channel-last swiglu applied on the channel axis."""
-    x = torch.randn(2, 6, *[4] * spatial)
-
-    reference = swiglu(x.movedim(1, -1)).movedim(-1, 1)
-
-    assert torch.allclose(SwiGLU(spatial=spatial)(x), reference)
+    assert norm(x, torch.randn(2, 4)).shape == x.shape
 
 
-def test_swiglu_odd_channels() -> None:
-    r"""Determines if an odd number of channels, which cannot be split in two, is rejected."""
-    x = torch.randn(2, 5, 4, 4)
+@pytest.mark.parametrize("mod", [None, torch.randn(2, 4)])
+def test_frmsnorm_without_modulation(mod: torch.Tensor) -> None:
+    r"""Determines if it reduces to azula's RMSNorm without features, or without a vector."""
+    x = torch.randn(2, 8, 6, 6)
 
-    with pytest.raises(RuntimeError):
-        SwiGLU(spatial=2)(x)
+    reference = RMSNorm(dim=-3)(x)
+
+    assert torch.allclose(FRMSNorm(8, mod_features=0, spatial=2)(x, mod), reference)
+    assert torch.allclose(FRMSNorm(8, mod_features=4, spatial=2)(x, None), reference)
+
+
+def test_frmsnorm_matches_gamma_beta() -> None:
+    r"""Determines if the output is gamma * rms_norm(x) + beta, as given by the projection."""
+    norm = FRMSNorm(8, mod_features=4, spatial=2)
+    norm.proj.weight.data.normal_()
+    norm.proj.bias.data.normal_()
+
+    x = torch.randn(2, 8, 6, 6)
+    mod = torch.randn(2, 4)
+
+    gamma, beta = norm.proj(mod).chunk(2, dim=-1)
+    expected = (1 + gamma[..., None, None]) * RMSNorm(dim=-3)(x) + beta[..., None, None]
+
+    assert torch.allclose(norm(x, mod), expected, atol=1e-6)
+
+
+def test_frmsnorm_is_constant_over_space() -> None:
+    r"""Determines if the same gamma and beta are applied to every spatial position."""
+    norm = FRMSNorm(8, mod_features=4, spatial=2)
+    norm.proj.weight.data.normal_()
+
+    x = torch.randn(2, 8, 6, 6)
+    mod = torch.randn(2, 4)
+
+    plain = RMSNorm(dim=-3)(x)
+    ratio = (norm(x, mod) - norm(torch.zeros_like(x), mod)) / plain
+
+    assert torch.allclose(ratio, ratio[..., :1, :1].expand_as(ratio), atol=1e-5)
+
+
+def test_frmsnorm_starts_near_identity() -> None:
+    r"""Determines if the modulation barely changes the normalized features at initialization."""
+    norm = FRMSNorm(64, mod_features=32, spatial=2)
+    x = torch.randn(4, 64, 16, 16)
+    mod = torch.randn(4, 32)
+
+    plain = RMSNorm(dim=-3)(x)
+
+    assert relative_deviation(norm(x, mod), plain) < 0.1
+
+
+def test_frmsnorm_depends_on_the_modulation() -> None:
+    r"""Determines if two different vectors give two different outputs."""
+    norm = FRMSNorm(8, mod_features=4, spatial=2)
+    norm.proj.weight.data.normal_()
+
+    x = torch.randn(2, 8, 6, 6)
+
+    assert not torch.allclose(norm(x, torch.randn(2, 4)), norm(x, torch.randn(2, 4)))
+
+
+def test_frmsnorm_gradients() -> None:
+    r"""Determines if gradients reach the input, the modulation vector and the projection."""
+    norm = FRMSNorm(8, mod_features=4, spatial=2)
+    x = torch.randn(2, 8, 6, 6, requires_grad=True)
+    mod = torch.randn(2, 4, requires_grad=True)
+
+    norm(x, mod).square().sum().backward()
+
+    for tensor in [x.grad, mod.grad, norm.proj.weight.grad]:
+        assert tensor is not None and torch.all(torch.isfinite(tensor))
 
 
 # --- ResidualBlock ---
