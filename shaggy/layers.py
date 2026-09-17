@@ -18,15 +18,9 @@ from typing import Optional
 
 
 class FRMSNorm(RMSNorm):
-    r"""Creates a functional RMS normalization layer.
-
-    The features are normalized, then scaled and shifted by a modulation vector, as
-    gamma(z) * x / rms(x) + beta(z), where gamma and beta are linear functions of z. With
-    mod_features = None, the layer is a plain RMS normalization and ignores z.
+    r"""Creates a functional root mean square normalization layer.
 
     References:
-        | Scalable Diffusion Models with Transformers (Peebles et al., 2022)
-        | https://arxiv.org/abs/2212.09748
         | Skillful joint probabilistic weather forecasting from marginals (Alet et al., 2025)
         | https://arxiv.org/abs/2506.10772
 
@@ -52,8 +46,6 @@ class FRMSNorm(RMSNorm):
 
         if mod_features:
             self.proj = nn.Linear(mod_features, 2 * channels)
-
-            # Identity initialization
             self.proj.weight.data.mul_(1e-2)
             self.proj.bias.data.zero_()
         else:
@@ -63,30 +55,28 @@ class FRMSNorm(RMSNorm):
         r"""
         Arguments:
             x: Input tensor (B, C, L_1, ..., L_N).
-            mod: Modulation vector (B, D), shared by all spatial positions.
+            mod: Modulation vector (B, D).
 
         Returns:
             Output tensor (B, C, L_1, ..., L_N).
         """
 
+        # Normalization
         x = super().forward(x)
-
         if self.proj is None or mod is None:
             return x
 
-        # One value per channel, broadcast over every spatial position
+        # Modulation
         gamma, beta = self.proj(mod).chunk(2, dim=-1)
         shape = (*gamma.shape, *(1,) * self.spatial)
+        gamma, beta = gamma.reshape(shape), beta.reshape(shape)
+        x = (1 + gamma) * x + beta
 
-        return (1 + gamma.reshape(shape)) * x + beta.reshape(shape)
+        return x
 
 
 class ModulatedSequential(nn.Sequential):
-    r"""Creates a sequential container that forwards a modulation vector.
-
-    Modules whose forward pass accepts a modulation vector are marked with a `modulated`
-    attribute, and receive it. The others, such as convolutions, are called as usual.
-    """
+    r"""Creates a sequential container that forwards a modulation vector."""
 
     modulated = True
 

@@ -18,8 +18,8 @@ class SOAP(torch.optim.Optimizer):
     r"""Creates a SOAP optimizer.
 
     References:
-    | SOAP: Improving and Stabilizing Shampoo using Adam (Vyas et al., 2024)
-    | https://arxiv.org/abs/2409.11321
+        | SOAP: Improving and Stabilizing Shampoo using Adam (Vyas et al., 2024)
+        | https://arxiv.org/abs/2409.11321
 
     Arguments:
         params: Network parameters.
