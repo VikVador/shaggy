@@ -89,3 +89,22 @@ def test_fae_rejects_wrong_number_of_inputs() -> None:
 
     with pytest.raises(AssertionError, match="inputs"):
         fae(xs[:1])
+
+
+def test_fae_modulation() -> None:
+    r"""Determines if the modulation vector reaches the decoder of every data source."""
+    config = dict(hid_channels=[8], hid_blocks=[1], spatial=2)
+    pairs = [create_ConvAE(c, c, 4, config_decoder={"mod_features": 4}, **config) for c in (2, 3)]
+
+    fae = FusionAE([p.encoder for p in pairs], [p.decoder for p in pairs])
+    xs = [torch.randn(2, c, 16, 16) for c in (2, 3)]
+
+    _, ys1 = fae(xs, torch.randn(2, 4))
+    _, ys2 = fae(xs, torch.randn(2, 4))
+    _, plain = fae(xs)
+
+    for y1, y2, y, x in zip(ys1, ys2, plain, xs):
+        assert y1.shape == x.shape
+        assert not torch.allclose(y1, y2)  # Two draws give two reconstructions
+        assert torch.allclose(fae(xs)[1][0], plain[0])  # No vector, no modulation
+        assert y.shape == x.shape
