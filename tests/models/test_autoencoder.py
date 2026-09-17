@@ -5,7 +5,7 @@ import torch
 
 from pathlib import Path
 
-from shaggy.layers import ResidualGroup
+from shaggy.layers import FRMSNorm, ResidualGroup
 from shaggy.models.cae import broadcast_to_axes, create_ConvAE
 
 param_combinations = [
@@ -202,3 +202,94 @@ def test_cae_rejects_mismatched_depths() -> None:
     r"""Determines if hid_channels and hid_blocks of different lengths are rejected."""
     with pytest.raises(AssertionError, match="match in length"):
         create_ConvAE(2, 2, 4, hid_channels=[8, 16], hid_blocks=[1])
+
+
+# --- Modulation ---
+
+MOD_CONFIG = dict(
+    in_channels=2,
+    out_channels=2,
+    lat_channels=4,
+    hid_channels=[8, 16],
+    hid_blocks=[1, 1],
+    hid_groups=[1, 1],
+    spatial=2,
+)
+
+
+def modulated_norms(model: torch.nn.Module) -> list:
+    r"""Collects the normalization layers that carry a modulation projection."""
+    return [m for m in model.modules() if isinstance(m, FRMSNorm) and m.proj is not None]
+
+
+def test_cae_without_mod_features_has_no_projection() -> None:
+    r"""Determines if mod_features = 0 adds no modulation layer, hence no parameter."""
+    model = create_ConvAE(**MOD_CONFIG)
+
+    assert modulated_norms(model) == []
+    assert not any(name.endswith("norm.proj.weight") for name, _ in model.named_parameters())
+
+
+def test_cae_modulation_reaches_every_norm() -> None:
+    r"""Determines if the vector reaches every norm of the decoder, and none of the encoder."""
+    model = create_ConvAE(**MOD_CONFIG, config_decoder={"mod_features": 4})
+    x = torch.randn(2, 2, 16, 16)
+
+    _, y = model(x, torch.randn(2, 4))
+    y.square().sum().backward()
+
+    assert modulated_norms(model.encoder) == []
+    assert len(modulated_norms(model.decoder)) > 0
+
+    for norm in modulated_norms(model.decoder):
+        assert norm.proj.weight.grad is not None
+        assert torch.any(norm.proj.weight.grad != 0)
+
+
+def test_cae_modulation_changes_the_reconstruction() -> None:
+    r"""Determines if two different vectors give two different reconstructions."""
+    model = create_ConvAE(**MOD_CONFIG, config_decoder={"mod_features": 4})
+
+    for norm in modulated_norms(model):
+        norm.proj.weight.data.normal_()
+
+    x = torch.randn(2, 2, 16, 16)
+
+    _, y1 = model(x, torch.randn(2, 4))
+    _, y2 = model(x, torch.randn(2, 4))
+
+    assert not torch.allclose(y1, y2)
+
+
+def test_cae_without_vector_is_deterministic() -> None:
+    r"""Determines if a modulated model without a vector behaves like an unmodulated one."""
+    model = create_ConvAE(**MOD_CONFIG, config_decoder={"mod_features": 4})
+
+    for norm in modulated_norms(model):
+        norm.proj.weight.data.normal_()
+
+    x = torch.randn(2, 2, 16, 16)
+
+    assert torch.allclose(model(x)[1], model(x, None)[1])
+
+
+def test_cae_modulation_starts_near_identity() -> None:
+    r"""Determines if the modulation barely changes the reconstruction at initialization."""
+    model = create_ConvAE(**MOD_CONFIG, config_decoder={"mod_features": 4})
+    x = torch.randn(2, 2, 16, 16)
+
+    _, plain = model(x)
+    _, modulated = model(x, torch.randn(2, 4))
+
+    assert (modulated - plain).pow(2).mean().sqrt() < 0.1 * plain.pow(2).mean().sqrt()
+
+
+@pytest.mark.parametrize("spatial", [1, 2, 3])
+def test_cae_modulation_preserves_shapes(spatial: int) -> None:
+    r"""Determines if a modulated autoencoder still reconstructs its input shape, in 1D to 3D."""
+    model = create_ConvAE(**{**MOD_CONFIG, "spatial": spatial}, config_decoder={"mod_features": 4})
+    x = torch.randn(2, 2, *[8] * spatial)
+
+    _, y = model(x, torch.randn(2, 4))
+
+    assert y.shape == x.shape

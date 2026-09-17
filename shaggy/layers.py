@@ -2,6 +2,7 @@ r"""Building blocks for Autoencoders."""
 
 __all__ = [
     "FRMSNorm",
+    "ModulatedSequential",
     "ResidualBlock",
     "ResidualGroup",
     "ResidualTrunk",
@@ -35,6 +36,8 @@ class FRMSNorm(RMSNorm):
         spatial: Number of spatial dimensions N.
         eps: Numerical stability term.
     """
+
+    modulated = True
 
     def __init__(
         self,
@@ -79,22 +82,51 @@ class FRMSNorm(RMSNorm):
         return (1 + gamma) * x + beta
 
 
+class ModulatedSequential(nn.Sequential):
+    r"""Creates a sequential container that forwards a modulation vector.
+
+    Modules whose forward pass accepts a modulation vector are marked with a `modulated`
+    attribute, and receive it. The others, such as convolutions, are called as usual.
+    """
+
+    modulated = True
+
+    def forward(self, x: Tensor, mod: Optional[Tensor] = None) -> Tensor:
+        r"""
+        Arguments:
+            x: Input tensor (B, C, L_1, ..., L_N).
+            mod: Modulation vector (B, D).
+
+        Returns:
+            Output tensor of the last module.
+        """
+
+        for module in self:
+            x = module(x, mod) if getattr(module, "modulated", False) else module(x)
+
+        return x
+
+
 class ResidualBlock(nn.Module):
     r"""Creates a (convolutional) residual block module.
 
     Arguments:
         channels: Number of channels C.
         ffn_factor: Channel expansion factor in the feed-forward network.
+        mod_features: Number of modulating features D, or 0 to disable the modulation.
         spatial: Number of spatial dimensions N.
         dropout: Dropout rate in [0, 1].
         checkpointing: Whether to use gradient checkpointing or not.
         kwargs: Keyword arguments passed to convolutional layers.
     """
 
+    modulated = True
+
     def __init__(
         self,
         channels: int,
         ffn_factor: int = 1,
+        mod_features: int = 0,
         spatial: int = 2,
         dropout: Optional[float] = None,
         checkpointing: bool = False,
@@ -103,7 +135,7 @@ class ResidualBlock(nn.Module):
         super().__init__()
 
         self.checkpointing = checkpointing
-        self.norm = RMSNorm(dim=-spatial - 1)
+        self.norm = FRMSNorm(channels, mod_features=mod_features, spatial=spatial)
         self.ffn = nn.Sequential(
             ConvNd(
                 channels,
@@ -125,24 +157,25 @@ class ResidualBlock(nn.Module):
         self.ffn[-1].weight.data.mul_(1e-2)
         self.ffn[-1].bias.data.zero_()
 
-    def _forward(self, x: Tensor) -> Tensor:
+    def _forward(self, x: Tensor, mod: Optional[Tensor] = None) -> Tensor:
         r"""Checkpointable forward pass."""
 
-        return x + self.ffn(self.norm(x))
+        return x + self.ffn(self.norm(x, mod))
 
-    def forward(self, x: Tensor) -> Tensor:
+    def forward(self, x: Tensor, mod: Optional[Tensor] = None) -> Tensor:
         r"""
         Arguments:
             x: Input tensor (B, C, L_1, ..., L_N).
+            mod: Modulation vector (B, D).
 
         Returns:
             Output tensor (B, C, L_1, ..., L_N).
         """
 
         if self.checkpointing:
-            return checkpoint(self._forward, reentrant=not self.training)(x)
+            return checkpoint(self._forward, reentrant=not self.training)(x, mod)
         else:
-            return self._forward(x)
+            return self._forward(x, mod)
 
 
 class ResidualGroup(nn.Module):
@@ -159,6 +192,8 @@ class ResidualGroup(nn.Module):
         kwargs: Keyword arguments passed to convolutional layers.
     """
 
+    modulated = True
+
     def __init__(
         self,
         channels: int,
@@ -168,7 +203,7 @@ class ResidualGroup(nn.Module):
     ) -> None:
         super().__init__()
 
-        self.blocks = nn.Sequential(*blocks)
+        self.blocks = ModulatedSequential(*blocks)
 
         # Fusing convolution after long-range skip
         self.fuse = ConvNd(channels, channels, spatial=spatial, **kwargs)
@@ -177,15 +212,16 @@ class ResidualGroup(nn.Module):
         self.fuse.weight.data.mul_(1e-2)
         self.fuse.bias.data.zero_()
 
-    def forward(self, x: Tensor) -> Tensor:
+    def forward(self, x: Tensor, mod: Optional[Tensor] = None) -> Tensor:
         r"""
         Arguments:
             x: Input tensor (B, C, L_1, ..., L_N).
+            mod: Modulation vector (B, D).
 
         Returns:
             Output tensor (B, C, L_1, ..., L_N).
         """
-        return x + self.fuse(self.blocks(x))
+        return x + self.fuse(self.blocks(x, mod))
 
 
 class ResidualTrunk(nn.Module):
@@ -197,10 +233,13 @@ class ResidualTrunk(nn.Module):
         num_groups: Number of residual groups, or 0 for a flat stack.
         spatial: Number of spatial dimensions N.
         ffn_factor: Channel expansion factor in the feed-forward networks.
+        mod_features: Number of modulating features D, or 0 to disable the modulation.
         dropout: Dropout rate in [0, 1].
         checkpointing: Whether to use gradient checkpointing or not.
         kwargs: Keyword arguments passed to convolutional layers.
     """
+
+    modulated = True
 
     def __init__(
         self,
@@ -209,6 +248,7 @@ class ResidualTrunk(nn.Module):
         num_groups: int,
         spatial: int = 2,
         ffn_factor: int = 1,
+        mod_features: int = 0,
         dropout: Optional[float] = None,
         checkpointing: bool = False,
         **kwargs,
@@ -218,6 +258,7 @@ class ResidualTrunk(nn.Module):
         block = lambda: ResidualBlock(
             channels,
             ffn_factor=ffn_factor,
+            mod_features=mod_features,
             spatial=spatial,
             dropout=dropout,
             checkpointing=checkpointing,
@@ -226,7 +267,7 @@ class ResidualTrunk(nn.Module):
 
         # Simple stack of residual blocks
         if num_groups == 0:
-            self.blocks = nn.Sequential(
+            self.blocks = ModulatedSequential(
                 *[block() for _ in range(num_blocks)],
             )
 
@@ -245,12 +286,13 @@ class ResidualTrunk(nn.Module):
             # Adding a final skip connection to the trunk
             self.blocks = ResidualGroup(channels, groups, spatial=spatial, **kwargs)
 
-    def forward(self, x: Tensor) -> Tensor:
+    def forward(self, x: Tensor, mod: Optional[Tensor] = None) -> Tensor:
         r"""
         Arguments:
             x: Input tensor (B, C, L_1, ..., L_N).
+            mod: Modulation vector (B, D).
 
         Returns:
             Output tensor (B, C, L_1, ..., L_N).
         """
-        return self.blocks(x)
+        return self.blocks(x, mod)

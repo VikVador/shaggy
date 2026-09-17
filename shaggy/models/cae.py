@@ -11,12 +11,12 @@ import math
 import torch
 import torch.nn as nn
 
-from azula.nn.layers import ConvNd, Patchify, RMSNorm, Unpatchify
+from azula.nn.layers import ConvNd, Patchify, Unpatchify
 from collections.abc import Sequence
 from torch import Tensor
 from typing import Any, Optional, Union
 
-from shaggy.layers import ResidualTrunk
+from shaggy.layers import FRMSNorm, ModulatedSequential, ResidualTrunk
 from shaggy.models.ae import AutoEncoder
 
 
@@ -46,6 +46,7 @@ class ConvEncoder(nn.Module):
         stride: Stride of the downsampling convolutions.
         pixel_shuffle: Whether to downsample with pixel shuffling or not.
         ffn_factor: Channel expansion factor in the feed-forward networks.
+        mod_features: Number of modulating features D, or 0 to disable the modulation.
         spatial: Number of spatial dimensions N.
         patch_size: Patch size applied before the first convolution.
         periodic: Whether the spatial dimensions are periodic or not.
@@ -65,6 +66,7 @@ class ConvEncoder(nn.Module):
         stride: Union[int, Sequence[int]] = 2,
         pixel_shuffle: bool = True,
         ffn_factor: int = 1,
+        mod_features: int = 0,
         spatial: int = 2,
         patch_size: Union[int, Sequence[int]] = 1,
         periodic: bool = False,
@@ -109,11 +111,13 @@ class ConvEncoder(nn.Module):
             **kwargs,
         )
 
-        self.descent = nn.Sequential()
+        self.descent = ModulatedSequential()
 
         for i, (num_blocks, num_groups) in enumerate(zip(hid_blocks, hid_groups)):
             if i > 0:
-                self.descent.append(RMSNorm(dim=-spatial - 1))
+                self.descent.append(
+                    FRMSNorm(hid_channels[i - 1], mod_features=mod_features, spatial=spatial)
+                )
 
                 if pixel_shuffle:
                     self.descent.append(
@@ -147,13 +151,14 @@ class ConvEncoder(nn.Module):
                     num_groups=num_groups,
                     spatial=spatial,
                     ffn_factor=ffn_factor,
+                    mod_features=mod_features,
                     dropout=dropout,
                     checkpointing=checkpointing,
                     **kwargs,
                 )
             )
 
-        self.out_norm = RMSNorm(dim=-spatial - 1)
+        self.out_norm = FRMSNorm(hid_channels[-1], mod_features=mod_features, spatial=spatial)
 
         self.out_proj = ConvNd(
             hid_channels[-1],
@@ -163,16 +168,17 @@ class ConvEncoder(nn.Module):
             **kwargs,
         )
 
-    def forward(self, x: Tensor) -> Tensor:
+    def forward(self, x: Tensor, mod: Optional[Tensor] = None) -> Tensor:
         r"""
         Arguments:
             x: Input tensor (B, C_i, L_1, ..., L_N).
+            mod: Modulation vector (B, D).
 
         Returns:
             Output tensor (B, C_o, L_1 / scale_1, ..., L_N / scale_N).
         """
-        x = self.descent(self.in_proj(self.patch(x)))
-        x = self.out_proj(self.out_norm(x))
+        x = self.descent(self.in_proj(self.patch(x)), mod)
+        x = self.out_proj(self.out_norm(x, mod))
         return x
 
 
@@ -189,6 +195,7 @@ class ConvDecoder(nn.Module):
         stride: Stride of the upsampling convolutions.
         pixel_shuffle: Whether to upsample with pixel shuffling or not.
         ffn_factor: Channel expansion factor in the feed-forward networks.
+        mod_features: Number of modulating features D, or 0 to disable the modulation.
         spatial: Number of spatial dimensions N.
         patch_size: Patch size applied after the last convolution.
         periodic: Whether the spatial dimensions are periodic or not.
@@ -208,6 +215,7 @@ class ConvDecoder(nn.Module):
         stride: Union[int, Sequence[int]] = 2,
         pixel_shuffle: bool = True,
         ffn_factor: int = 1,
+        mod_features: int = 0,
         spatial: int = 2,
         patch_size: Union[int, Sequence[int]] = 1,
         periodic: bool = False,
@@ -249,7 +257,7 @@ class ConvDecoder(nn.Module):
             **kwargs,
         )
 
-        self.ascent = nn.Sequential()
+        self.ascent = ModulatedSequential()
 
         for i in reversed(range(len(hid_channels))):
             self.ascent.append(
@@ -259,6 +267,7 @@ class ConvDecoder(nn.Module):
                     num_groups=hid_groups[i],
                     spatial=spatial,
                     ffn_factor=ffn_factor,
+                    mod_features=mod_features,
                     dropout=dropout,
                     checkpointing=checkpointing,
                     **kwargs,
@@ -266,7 +275,9 @@ class ConvDecoder(nn.Module):
             )
 
             if i > 0:
-                self.ascent.append(RMSNorm(dim=-spatial - 1))
+                self.ascent.append(
+                    FRMSNorm(hid_channels[i], mod_features=mod_features, spatial=spatial)
+                )
 
                 if pixel_shuffle:
                     self.ascent.append(
@@ -295,7 +306,7 @@ class ConvDecoder(nn.Module):
                         )
                     )
 
-        self.out_norm = RMSNorm(dim=-spatial - 1)
+        self.out_norm = FRMSNorm(hid_channels[0], mod_features=mod_features, spatial=spatial)
 
         self.out_proj = ConvNd(
             hid_channels[0],
@@ -307,16 +318,17 @@ class ConvDecoder(nn.Module):
 
         self.unpatch = Unpatchify(patch_shape=patch_size)
 
-    def forward(self, x: Tensor) -> Tensor:
+    def forward(self, x: Tensor, mod: Optional[Tensor] = None) -> Tensor:
         r"""
         Arguments:
             x: Input tensor (B, C_i, L_1, ..., L_N).
+            mod: Modulation vector (B, D).
 
         Returns:
             Output tensor (B, C_o, L_1 * scale_1, ..., L_N * scale_N).
         """
-        x = self.ascent(self.in_proj(x))
-        x = self.unpatch(self.out_proj(self.out_norm(x)))
+        x = self.ascent(self.in_proj(x), mod)
+        x = self.unpatch(self.out_proj(self.out_norm(x, mod)))
         return x
 
 

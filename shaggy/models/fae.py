@@ -8,6 +8,7 @@ import torch.nn as nn
 
 from collections.abc import Sequence
 from torch import Tensor
+from typing import Optional
 
 from shaggy.models.ae import AutoEncoder
 
@@ -37,11 +38,12 @@ class FusionAE(nn.Module):
             AutoEncoder(encoder, decoder) for encoder, decoder in zip(encoders, decoders)
         ])
 
-    def encode(self, xs: Sequence[Tensor]) -> list[Tensor]:
+    def encode(self, xs: Sequence[Tensor], mod: Optional[Tensor] = None) -> list[Tensor]:
         r"""Encodes each data source into its own latent representation.
 
         Arguments:
             xs: Input tensors, one per data source.
+            mod: Modulation vector, shared by every data source.
 
         Returns:
             zs: Latent codes, one per data source.
@@ -53,13 +55,14 @@ class FusionAE(nn.Module):
             f"ERROR (FusionAE) | Expected {n_sources} inputs, got {len(xs)}."
         )
 
-        return [autoencoder.encode(x) for autoencoder, x in zip(self.autoencoders, xs)]
+        return [autoencoder.encode(x, mod) for autoencoder, x in zip(self.autoencoders, xs)]
 
-    def decode(self, zs: Sequence[Tensor]) -> list[Tensor]:
+    def decode(self, zs: Sequence[Tensor], mod: Optional[Tensor] = None) -> list[Tensor]:
         r"""Decodes each latent code back into the ambient space of its data source.
 
         Arguments:
             zs: Latent codes, one per data source.
+            mod: Modulation vector, shared by every data source.
 
         Returns:
             xs: Reconstructed tensors, one per data source.
@@ -71,13 +74,20 @@ class FusionAE(nn.Module):
             f"ERROR (FusionAE) | Expected {n_sources} latent codes, got {len(zs)}."
         )
 
-        return [autoencoder.decode(z) for autoencoder, z in zip(self.autoencoders, zs)]
+        return [autoencoder.decode(z, mod) for autoencoder, z in zip(self.autoencoders, zs)]
 
-    def forward(self, xs: Sequence[Tensor]) -> tuple[list[Tensor], list[Tensor]]:
+    def forward(
+        self,
+        xs: Sequence[Tensor],
+        mod: Optional[Tensor] = None,
+    ) -> tuple[list[Tensor], list[Tensor]]:
         r"""Encodes and reconstructs each data source separately.
+
+        The encoding stays deterministic, only the decoding is modulated.
 
         Arguments:
             xs: Input tensors, one per data source.
+            mod: Modulation vector, shared by every data source.
 
         Returns:
             zs: Latent codes, one per data source.
@@ -85,6 +95,6 @@ class FusionAE(nn.Module):
         """
 
         zs = self.encode(xs)
-        ys = self.decode(zs)
+        ys = self.decode(zs, mod)
 
         return zs, ys

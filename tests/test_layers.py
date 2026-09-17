@@ -65,17 +65,15 @@ def test_frmsnorm_matches_gamma_beta() -> None:
 
 
 def test_frmsnorm_is_constant_over_space() -> None:
-    r"""Determines if the same gamma and beta are applied to every spatial position."""
+    r"""Determines if every spatial position is modulated alike, by shifting the input around."""
     norm = FRMSNorm(8, mod_features=4, spatial=2)
     norm.proj.weight.data.normal_()
 
     x = torch.randn(2, 8, 6, 6)
     mod = torch.randn(2, 4)
+    shift = dict(shifts=(2, 3), dims=(-2, -1))
 
-    plain = RMSNorm(dim=-3)(x)
-    ratio = (norm(x, mod) - norm(torch.zeros_like(x), mod)) / plain
-
-    assert torch.allclose(ratio, ratio[..., :1, :1].expand_as(ratio), atol=1e-5)
+    assert torch.allclose(norm(x.roll(**shift), mod), norm(x, mod).roll(**shift), atol=1e-6)
 
 
 def test_frmsnorm_starts_near_identity() -> None:
