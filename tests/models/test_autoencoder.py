@@ -188,6 +188,43 @@ def test_broadcast_to_axes_rejected_by_encoder() -> None:
         create_ConvAE(2, 2, 4, spatial=3, kernel_size=(3, 3), hid_channels=[8], hid_blocks=[1])
 
 
+# --- Stride per level ---
+
+
+def test_cae_stride_per_level() -> None:
+    r"""Determines if a per-level stride downsamples each axis only at its own levels."""
+    model = create_ConvAE(
+        2,
+        2,
+        4,
+        spatial=3,
+        hid_channels=[4, 8, 16],
+        hid_blocks=[1, 1, 1],
+        stride=[[2, 2, 2], [1, 2, 2]],
+    )
+    x = torch.randn(1, 2, 8, 16, 16)
+
+    z, y = model(x)
+
+    assert model.encoder.scale == model.decoder.scale == (2, 4, 4)
+    assert z.shape == (1, 4, 4, 4, 4)
+    assert y.shape == x.shape
+
+
+def test_cae_stride_per_level_wrong_length() -> None:
+    r"""Determines if a per-level stride with the wrong number of levels is rejected."""
+    with pytest.raises(AssertionError, match="one per level"):
+        create_ConvAE(
+            2,
+            2,
+            4,
+            spatial=3,
+            hid_channels=[4, 8, 16],
+            hid_blocks=[1, 1, 1],
+            stride=[[2, 2, 2], [1, 2, 2], [1, 2, 2]],
+        )
+
+
 # --- ConvEncoder / ConvDecoder security ---
 
 
