@@ -39,11 +39,8 @@ def broadcast_to_levels(
 ) -> list[tuple[int, ...]]:
     r"""Broadcasts a stride to one value per level and per axis.
 
-    An int, or a sequence of ints (one per axis), is shared by every level. Any other
-    sequence holds one stride per level, each an int or a sequence of ints (one per axis).
-
     Arguments:
-        value: Stride, per level and/or per axis.
+        value: An int or one int per axis, shared by every level, or one such stride per level.
         levels: Number of resampling levels.
         spatial: Number of spatial dimensions N.
 
@@ -72,8 +69,7 @@ class ConvEncoder(nn.Module):
         hid_blocks: Number of residual blocks at each depth.
         hid_groups: Number of residual groups at each depth, or 0 for a flat stack.
         kernel_size: Kernel size of all convolutions.
-        stride: Stride of the downsampling convolutions, an int or one int per axis shared by
-            every level, or one such stride per level (len(hid_channels) - 1 of them).
+        stride: Stride of the downsampling convolutions, for every level or one per level.
         pixel_shuffle: Whether to downsample with pixel shuffling or not.
         ffn_factor: Channel expansion factor in the feed-forward networks.
         mod_features: Number of modulating features D, or None to disable the modulation.
@@ -223,9 +219,7 @@ class ConvDecoder(nn.Module):
         hid_blocks: Number of residual blocks at each depth.
         hid_groups: Number of residual groups at each depth, or 0 for a flat stack.
         kernel_size: Kernel size of all convolutions.
-        stride: Stride of the upsampling convolutions, an int or one int per axis shared by
-            every level, or one such stride per level (len(hid_channels) - 1 of them), listed
-            from the finest to the coarsest level as in the encoder.
+        stride: Stride of the upsampling convolutions, for every level or one per level.
         pixel_shuffle: Whether to upsample with pixel shuffling or not.
         ffn_factor: Channel expansion factor in the feed-forward networks.
         mod_features: Number of modulating features D, or None to disable the modulation.
