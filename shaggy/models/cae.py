@@ -32,6 +32,33 @@ def broadcast_to_axes(value: Union[int, Sequence[int]], spatial: int) -> tuple[i
     return tuple(value)
 
 
+def broadcast_to_levels(
+    value: Union[int, Sequence[Union[int, Sequence[int]]]],
+    levels: int,
+    spatial: int,
+) -> list[tuple[int, ...]]:
+    r"""Broadcasts a stride to one value per level and per axis.
+
+    Arguments:
+        value: An int or one int per axis, shared by every level, or one such stride per level.
+        levels: Number of resampling levels.
+        spatial: Number of spatial dimensions N.
+
+    Returns:
+        strides: One stride per level, each with one value per axis.
+    """
+    if isinstance(value, int) or all(isinstance(v, int) for v in value):
+        return [broadcast_to_axes(value, spatial)] * levels
+
+    # Security
+    assert len(value) == levels, (
+        f"ERROR (broadcast_to_levels) | Expected {levels} strides, one per level, "
+        f"got {len(value)}."
+    )
+
+    return [broadcast_to_axes(v, spatial) for v in value]
+
+
 class ConvEncoder(nn.Module):
     r"""Creates a convolutional encoder module.
 
@@ -42,7 +69,7 @@ class ConvEncoder(nn.Module):
         hid_blocks: Number of residual blocks at each depth.
         hid_groups: Number of residual groups at each depth, or 0 for a flat stack.
         kernel_size: Kernel size of all convolutions.
-        stride: Stride of the downsampling convolutions.
+        stride: Stride of the downsampling convolutions, for every level or one per level.
         pixel_shuffle: Whether to downsample with pixel shuffling or not.
         ffn_factor: Channel expansion factor in the feed-forward networks.
         mod_features: Number of modulating features D, or None to disable the modulation.
@@ -62,7 +89,7 @@ class ConvEncoder(nn.Module):
         hid_blocks: Sequence[int] = (3, 3, 3),
         hid_groups: Optional[Sequence[int]] = None,
         kernel_size: Union[int, Sequence[int]] = 3,
-        stride: Union[int, Sequence[int]] = 2,
+        stride: Union[int, Sequence[Union[int, Sequence[int]]]] = 2,
         pixel_shuffle: bool = True,
         ffn_factor: int = 1,
         mod_features: Optional[int] = None,
@@ -79,7 +106,7 @@ class ConvEncoder(nn.Module):
             hid_groups = [0] * len(hid_channels)
 
         kernel_size = broadcast_to_axes(kernel_size, spatial)
-        stride = broadcast_to_axes(stride, spatial)
+        strides = broadcast_to_levels(stride, len(hid_channels) - 1, spatial)
         patch_size = broadcast_to_axes(patch_size, spatial)
 
         # Security
@@ -98,7 +125,7 @@ class ConvEncoder(nn.Module):
         )
 
         self.in_channels = in_channels
-        self.scale = tuple(p * s ** (len(hid_channels) - 1) for p, s in zip(patch_size, stride))
+        self.scale = tuple(p * math.prod(s[a] for s in strides) for a, p in enumerate(patch_size))
 
         self.patch = Patchify(patch_shape=patch_size)
 
@@ -121,9 +148,9 @@ class ConvEncoder(nn.Module):
                 if pixel_shuffle:
                     self.descent.append(
                         nn.Sequential(
-                            Patchify(patch_shape=stride),
+                            Patchify(patch_shape=strides[i - 1]),
                             ConvNd(
-                                hid_channels[i - 1] * math.prod(stride),
+                                hid_channels[i - 1] * math.prod(strides[i - 1]),
                                 hid_channels[i],
                                 spatial=spatial,
                                 identity_init=identity_init,
@@ -137,7 +164,7 @@ class ConvEncoder(nn.Module):
                             hid_channels[i - 1],
                             hid_channels[i],
                             spatial=spatial,
-                            stride=stride,
+                            stride=strides[i - 1],
                             identity_init=identity_init,
                             **kwargs,
                         )
@@ -192,7 +219,7 @@ class ConvDecoder(nn.Module):
         hid_blocks: Number of residual blocks at each depth.
         hid_groups: Number of residual groups at each depth, or 0 for a flat stack.
         kernel_size: Kernel size of all convolutions.
-        stride: Stride of the upsampling convolutions.
+        stride: Stride of the upsampling convolutions, for every level or one per level.
         pixel_shuffle: Whether to upsample with pixel shuffling or not.
         ffn_factor: Channel expansion factor in the feed-forward networks.
         mod_features: Number of modulating features D, or None to disable the modulation.
@@ -212,7 +239,7 @@ class ConvDecoder(nn.Module):
         hid_blocks: Sequence[int] = (3, 3, 3),
         hid_groups: Optional[Sequence[int]] = None,
         kernel_size: Union[int, Sequence[int]] = 3,
-        stride: Union[int, Sequence[int]] = 2,
+        stride: Union[int, Sequence[Union[int, Sequence[int]]]] = 2,
         pixel_shuffle: bool = True,
         ffn_factor: int = 1,
         mod_features: Optional[int] = None,
@@ -229,7 +256,7 @@ class ConvDecoder(nn.Module):
             hid_groups = [0] * len(hid_channels)
 
         kernel_size = broadcast_to_axes(kernel_size, spatial)
-        stride = broadcast_to_axes(stride, spatial)
+        strides = broadcast_to_levels(stride, len(hid_channels) - 1, spatial)
         patch_size = broadcast_to_axes(patch_size, spatial)
 
         # Security
@@ -247,7 +274,7 @@ class ConvDecoder(nn.Module):
             padding_mode="circular" if periodic else "zeros",
         )
 
-        self.scale = tuple(p * s ** (len(hid_channels) - 1) for p, s in zip(patch_size, stride))
+        self.scale = tuple(p * math.prod(s[a] for s in strides) for a, p in enumerate(patch_size))
 
         self.in_proj = ConvNd(
             in_channels,
@@ -284,18 +311,18 @@ class ConvDecoder(nn.Module):
                         nn.Sequential(
                             ConvNd(
                                 hid_channels[i],
-                                hid_channels[i - 1] * math.prod(stride),
+                                hid_channels[i - 1] * math.prod(strides[i - 1]),
                                 spatial=spatial,
                                 identity_init=identity_init,
                                 **kwargs,
                             ),
-                            Unpatchify(patch_shape=stride),
+                            Unpatchify(patch_shape=strides[i - 1]),
                         )
                     )
                 else:
                     self.ascent.append(
                         nn.Sequential(
-                            nn.Upsample(scale_factor=stride, mode="nearest"),
+                            nn.Upsample(scale_factor=strides[i - 1], mode="nearest"),
                             ConvNd(
                                 hid_channels[i],
                                 hid_channels[i - 1],
