@@ -67,9 +67,9 @@ def loss_geometry_embedding(x: Tensor, z: Tensor) -> Tensor:
     if x.dim() > 2:
         x = x.flatten(1)
 
-    # Compute pairwise squared distances
-    dx2 = torch.cdist(x, x).square()
-    dz2 = torch.cdist(z, z).square()
+    # Exact pairwise squared distances, since cdist switches to an imprecise matrix product above 25 samples
+    dx2 = torch.cdist(x, x, compute_mode="donot_use_mm_for_euclid_dist").square()
+    dz2 = torch.cdist(z, z, compute_mode="donot_use_mm_for_euclid_dist").square()
 
     # Compute Gromov-Monge cost, log1p stays accurate for small distances
     cost = (torch.log1p(dz2) - torch.log1p(dx2)).square()
