@@ -6,7 +6,7 @@ import torch
 from pathlib import Path
 
 from shaggy.layers import FRMSNorm, ResidualGroup
-from shaggy.models.cae import broadcast_to_axes, create_ConvAE
+from shaggy.models.cae import ConvEncoder, broadcast_to_axes, create_ConvAE
 
 param_combinations = [
     (1, 3, [16], 2),
@@ -353,3 +353,32 @@ def test_cae_latent_matches_a_forward_pass(kernel_size: int, stride: int, patch_
         encoded = model.encoder(torch.zeros(1, 2, *resolution))
 
     assert model.latent(resolution) == tuple(encoded.shape[1:])
+
+
+# --- ConvEncoder / Channel mixing ---
+
+
+@pytest.mark.parametrize("spatial", [2, 3])
+def test_encoder_mixing_projects_the_channels(spatial: int) -> None:
+    r"""Determines if the pointwise convolution maps the inputs to mix_channels, starting near identity."""
+    encoder = ConvEncoder(
+        6, 4, mix_channels=2, hid_channels=[8, 16], hid_blocks=[1, 1], spatial=spatial
+    )
+    x = torch.randn(2, 6, *[8] * spatial)
+
+    assert encoder.mix.weight.shape[:2] == (2, 6)
+    assert encoder.in_proj.in_channels == 2
+    assert encoder(x).shape == (2, 4, *[4] * spatial)
+    assert torch.allclose(encoder.mix.weight.flatten(1), torch.eye(2, 6), atol=1e-2)
+
+
+def test_encoder_without_mixing_is_unchanged() -> None:
+    r"""Determines if mix_channels = None adds no layer and no parameter."""
+    config = dict(hid_channels=[8, 16], hid_blocks=[1, 1], spatial=2)
+    torch.manual_seed(0)
+    reference = ConvEncoder(6, 4, **config)
+    torch.manual_seed(0)
+    encoder = ConvEncoder(6, 4, mix_channels=None, **config)
+
+    assert isinstance(encoder.mix, torch.nn.Identity)
+    assert encoder.state_dict().keys() == reference.state_dict().keys()
