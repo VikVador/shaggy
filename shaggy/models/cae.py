@@ -65,6 +65,7 @@ class ConvEncoder(nn.Module):
     Arguments:
         in_channels: Number of input channels C_i.
         out_channels: Number of output channels C_o.
+        mix_channels: Number of channels of a pointwise convolution mixing the inputs first, or None.
         hid_channels: Number of channels at each depth.
         hid_blocks: Number of residual blocks at each depth.
         hid_groups: Number of residual groups at each depth, or 0 for a flat stack.
@@ -85,6 +86,7 @@ class ConvEncoder(nn.Module):
         self,
         in_channels: int,
         out_channels: int,
+        mix_channels: Optional[int] = None,
         hid_channels: Sequence[int] = (64, 128, 256),
         hid_blocks: Sequence[int] = (3, 3, 3),
         hid_groups: Optional[Sequence[int]] = None,
@@ -126,6 +128,20 @@ class ConvEncoder(nn.Module):
 
         self.in_channels = in_channels
         self.scale = tuple(p * math.prod(s[a] for s in strides) for a, p in enumerate(patch_size))
+
+        # The pointwise convolution mixes the input channels at full resolution, e.g. fields with
+        # their coordinates, such that fewer channels reach the first convolution
+        if mix_channels is None:
+            self.mix = nn.Identity()
+        else:
+            self.mix = ConvNd(
+                in_channels,
+                mix_channels,
+                spatial=spatial,
+                kernel_size=1,
+                identity_init=identity_init,
+            )
+            in_channels = mix_channels
 
         self.patch = Patchify(patch_shape=patch_size)
 
@@ -203,7 +219,7 @@ class ConvEncoder(nn.Module):
         Returns:
             Output tensor (B, C_o, L_1 / scale_1, ..., L_N / scale_N).
         """
-        x = self.descent(self.in_proj(self.patch(x)), mod)
+        x = self.descent(self.in_proj(self.patch(self.mix(x))), mod)
         x = self.out_proj(self.out_norm(x, mod))
 
         return x
