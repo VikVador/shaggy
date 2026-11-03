@@ -1,23 +1,16 @@
-r"""Tests for Shaggy training tools: stopping, fixed samples, infinite dataloader, saved states."""
+r"""Tests for Shaggy training tools: stopping and saved states."""
 
 import torch
 
 from pathlib import Path
-from torch.utils.data import DataLoader
 
 from shaggy.optimizers.soap import SOAP
 from shaggy.schedulers import warmup_cosine_decay
-from shaggy.training import (
-    get_fixed_indices,
-    has_stagnated,
-    infinite_dataloader,
-    load_state,
-    save_state,
-)
+from shaggy.training import has_stagnated, load_state, save_state
 
 
 def test_has_stagnated_flat() -> None:
-    r"""Determines if it stops on a flat validation."""
+    r"""Determines if it stops on a flat loss."""
 
     history = [1.0, 0.5, 0.25] + [0.1, 0.1001, 0.0999, 0.1] * 3
 
@@ -25,7 +18,7 @@ def test_has_stagnated_flat() -> None:
 
 
 def test_has_stagnated_falling() -> None:
-    r"""Determines if it continues while the validation falls."""
+    r"""Determines if it continues while the loss falls."""
 
     history = [0.9**i for i in range(30)]
 
@@ -33,7 +26,7 @@ def test_has_stagnated_falling() -> None:
 
 
 def test_has_stagnated_rising() -> None:
-    r"""Determines if it stops on a rising validation, whose spread stays large."""
+    r"""Determines if it stops on a rising loss, whose spread stays large."""
 
     history = [0.1 * 1.1**i for i in range(20)]
 
@@ -45,33 +38,6 @@ def test_has_stagnated_too_short() -> None:
 
     assert not has_stagnated([1.0, 2.0, 3.0], window=10, threshold=0.01)
     assert not has_stagnated([1.0 + i for i in range(10)], window=10, threshold=0.01)
-
-
-def test_get_fixed_indices_typical() -> None:
-    r"""Determines if the days are always the same, spread through time and mixed."""
-
-    indices = get_fixed_indices(730, 512)
-
-    assert indices == get_fixed_indices(730, 512)
-    assert len(set(indices)) == 512
-    assert min(indices) == 0 and max(indices) == 729
-    assert indices != sorted(indices)
-    assert max(b - a for a, b in zip(sorted(indices), sorted(indices)[1:], strict=False)) <= 2
-
-
-def test_get_fixed_indices_all() -> None:
-    r"""Determines if asking for every day keeps each of them once."""
-
-    assert sorted(get_fixed_indices(16, 16)) == list(range(16))
-
-
-def test_infinite_dataloader_cycles() -> None:
-    r"""Determines if it cycles past the end of the dataloader and stops after the requested batches."""
-
-    dataloader = DataLoader(torch.arange(6), batch_size=2)
-    batches = [batch.tolist() for batch in infinite_dataloader(dataloader, batches=5)]
-
-    assert batches == [[0, 1], [2, 3], [4, 5], [0, 1], [2, 3]]
 
 
 def test_state_resumes_exactly(tmp_path: Path) -> None:
