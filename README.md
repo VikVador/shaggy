@@ -57,6 +57,8 @@ save(autoencoder, config, "runs/cae")  # config: the arguments given to create_C
 autoencoder = load("runs/cae", create_ConvAE)
 ```
 
+For more information, check out the documentation at [shaggy.readthedocs.io](https://shaggy.readthedocs.io).
+
 ## Tutorials
 
 Tutorials live on the [`master-demo`](https://github.com/VikVador/shaggy/tree/master-demo) branch, a copy of `master` that also holds the datasets they use.
