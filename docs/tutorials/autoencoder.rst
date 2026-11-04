@@ -1,7 +1,7 @@
 Training an autoencoder
 =======================
 
-This tutorial trains a 3D convolutional autoencoder on the Black Sea state (temperature, salinity, oxygen and chlorophyll, each on 5 depth levels) in two stages: first the encoder alone, with a loss that preserves the geometry of the data, then the decoder alone, with a reconstruction loss.
+This tutorial trains a 3D convolutional autoencoder on 32 days of the Black Sea state (temperature, salinity, oxygen and chlorophyll, each on 5 depth levels) in two stages: first the encoder alone, with a loss that preserves the geometry of the data, then the decoder alone, with a reconstruction loss.
 
 .. code-block:: python
 
@@ -24,7 +24,7 @@ All the parameters that influence the tutorial are grouped in the dictionaries b
             "x": "data/x.pt",
             "mask": "data/m.pt",
             "variables": ["temperature", "salinity", "oxygen", "chlorophyll"],
-            "n_val": 32,
+            "n_val": 8,
             "seed": 0,
         },
         "model": {
