@@ -15,8 +15,8 @@ class AutoEncoder(nn.Module):
     r"""Base class for Autoencoder architectures.
 
     Arguments:
-        encoder: Encoder module.
-        decoder: Decoder module.
+        encoder : Encoder module.
+        decoder : Decoder module.
     """
 
     def __init__(
@@ -41,11 +41,11 @@ class AutoEncoder(nn.Module):
         r"""Encodes data in ambient space into a latent representation.
 
         Arguments:
-            x: Input tensor.
-            mod: Modulation vector, for encoders that accept one.
+            x   : Input tensor.
+            mod : Modulation vector, for encoders that accept one.
 
         Returns:
-            z: Latent code.
+            z : Latent code.
         """
 
         dtype = get_module_dtype(self.encoder)
@@ -58,11 +58,11 @@ class AutoEncoder(nn.Module):
         r"""Decodes a latent code back into ambient space.
 
         Arguments:
-            z: Latent code.
-            mod: Modulation vector, for decoders that accept one.
+            z   : Latent code.
+            mod : Modulation vector, for decoders that accept one.
 
         Returns:
-            x: Reconstructed tensor.
+            x : Reconstructed tensor.
         """
 
         dtype = get_module_dtype(self.decoder)
@@ -74,17 +74,16 @@ class AutoEncoder(nn.Module):
     def forward(self, x: Tensor, mod: Optional[Tensor] = None) -> tuple[Tensor, Tensor]:
         r"""Encodes and reconstructs data.
 
-        The encoding stays deterministic, only the decoding is modulated.
-
         Arguments:
-            x: Input tensor.
-            mod: Modulation vector, for decoders that accept one.
+            x   : Input tensor.
+            mod : Modulation vector, for decoders that accept one.
 
         Returns:
-            z: Latent code.
-            y: Reconstructed tensor.
+            z : Latent code.
+            y : Reconstructed tensor.
         """
 
+        # The encoding stays deterministic, only the decoding is modulated
         z = self.encode(x)
         y = self.decode(z, mod)
 

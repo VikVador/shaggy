@@ -7,10 +7,7 @@ __all__ = [
 import torch
 
 from torch import nn
-from typing import (
-    Any,
-    Optional,
-)
+from typing import Any, Optional
 
 from .muon import Muon
 
@@ -25,12 +22,12 @@ class HybridMA:
         | https://kellerjordan.github.io/posts/muon/
 
     Arguments:
-        model: Neural network whose parameters are optimized.
-        lr: Learning rate.
-        weight_decay: Weight decay coefficient [0, 1].
-        config_muon: Additional keyword arguments passed to Muon.
-        config_adamw: Additional keyword arguments passed to AdamW.
-        exclude_names: Parameter names to route to AdamW regardless of their shape.
+        model         : Neural network whose parameters are optimized.
+        lr            : Learning rate.
+        weight_decay  : Weight decay coefficient [0, 1].
+        config_muon   : Additional keyword arguments passed to Muon.
+        config_adamw  : Additional keyword arguments passed to AdamW.
+        exclude_names : Parameter names to route to AdamW regardless of their shape.
     """
 
     def __init__(
@@ -79,8 +76,9 @@ class HybridMA:
         r"""Zeroes the gradients of all parameters.
 
         Arguments:
-            set_to_none: If True, sets gradients to None instead of zero.
+            set_to_none : If True, sets gradients to None instead of zero.
         """
+
         if self.opt_muon is not None:
             self.opt_muon.zero_grad(set_to_none=set_to_none)
         if self.opt_adamw is not None:
@@ -90,8 +88,9 @@ class HybridMA:
         r"""Returns the optimizer state as a dictionary.
 
         Returns:
-            state: A dict with keys for "muon" and "adamw" optimizers.
+            state : A dict with keys for "muon" and "adamw" optimizers.
         """
+
         return {
             "muon": self.opt_muon.state_dict() if self.opt_muon is not None else None,
             "adamw": self.opt_adamw.state_dict() if self.opt_adamw is not None else None,
@@ -101,8 +100,9 @@ class HybridMA:
         r"""Loads a previously saved optimizer state.
 
         Arguments:
-            state_dict: A dict as returned by state_dict(), with keys "muon" and "adamw".
+            state_dict : A dict as returned by state_dict(), with keys "muon" and "adamw".
         """
+
         if self.opt_muon is not None:
             self.opt_muon.load_state_dict(state_dict["muon"])
         if self.opt_adamw is not None:

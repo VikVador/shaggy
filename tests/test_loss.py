@@ -139,6 +139,20 @@ def test_loss_geometry_embedding_excludes_self_distances() -> None:
     assert loss_geometry_embedding(x, z).item() == pytest.approx(expected.item())
 
 
+def test_loss_geometry_embedding_large_batch() -> None:
+    r"""Determines if the cost stays exact for close samples far from the origin, above 25 samples."""
+    x = 1000.0 + 0.01 * torch.randn(32, 1000, dtype=torch.float64)
+    z = torch.randn(32, 64, dtype=torch.float64)
+
+    dx2 = (x[:, None] - x[None]).square().sum(dim=-1)
+    dz2 = (z[:, None] - z[None]).square().sum(dim=-1)
+    expected = (torch.log1p(dz2) - torch.log1p(dx2)).square().sum() / (32 * 31)
+
+    assert loss_geometry_embedding(x.float(), z.float()).item() == pytest.approx(
+        expected.item(), rel=1e-4
+    )
+
+
 def test_loss_geometry_embedding_gradients() -> None:
     r"""Determines if gradients flow back to the latent codes."""
     x = torch.randn(5, 6)

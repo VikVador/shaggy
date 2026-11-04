@@ -8,7 +8,7 @@ from shaggy.optimizers.soap import adam
 
 
 def test_soap_step_reduces_loss() -> None:
-    r"""A few SOAP steps reduce the loss of a small MLP regression."""
+    r"""Determines if a few SOAP steps reduce the loss of a small MLP regression."""
     torch.manual_seed(0)
     mlp = torch.nn.Sequential(torch.nn.Linear(4, 8), torch.nn.SiLU(), torch.nn.Linear(8, 4))
     x = torch.randn(16, 4)
@@ -36,12 +36,12 @@ def test_soap_step_reduces_loss() -> None:
     ],
 )
 def test_soap_merge_shape(shape: tuple, max_precond_size: int, expected: tuple) -> None:
-    r"""merge_shape folds trailing dimensions without exceeding max_precond_size."""
+    r"""Determines if merge_shape folds trailing dimensions within max_precond_size."""
     assert SOAP.merge_shape(shape, max_precond_size=max_precond_size) == expected
 
 
 def test_soap_skips_parameters_without_gradient() -> None:
-    r"""Parameters left without a gradient are untouched by step."""
+    r"""Determines if the parameters without a gradient are left untouched by step."""
     weight = torch.nn.Parameter(torch.randn(4, 4))
     frozen = torch.nn.Parameter(torch.randn(4, 4))
     frozen_before = frozen.detach().clone()
@@ -54,7 +54,7 @@ def test_soap_skips_parameters_without_gradient() -> None:
 
 
 def test_soap_precondition_1d_builds_preconditioner() -> None:
-    r"""With precondition_1d=True, a 1D parameter gets a non-trivial preconditioner."""
+    r"""Determines if precondition_1d=True gives a 1D parameter a non-trivial preconditioner."""
     bias = torch.nn.Parameter(torch.randn(8))
     optimizer = SOAP([bias], lr=1e-2, precondition_1d=True)
     bias.grad = torch.randn_like(bias)
@@ -66,7 +66,7 @@ def test_soap_precondition_1d_builds_preconditioner() -> None:
 
 
 def test_adam_update_matches_closed_form() -> None:
-    r"""The functional adam() helper matches mean / sqrt(var + eps^2)."""
+    r"""Determines if adam() matches mean / sqrt(var + eps^2)."""
     mean = torch.tensor([1.0, -2.0])
     var = torch.tensor([4.0, 9.0])
     expected = mean / torch.sqrt(var + 1e-8**2)
