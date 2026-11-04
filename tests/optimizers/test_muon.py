@@ -7,7 +7,7 @@ from shaggy.optimizers import Muon
 
 
 def test_muon_step_reduces_loss() -> None:
-    r"""A few Muon steps reduce the loss of a simple regression on a 2D weight."""
+    r"""Determines if a few Muon steps reduce the loss of a regression on a 2D weight."""
     torch.manual_seed(0)
     weight = torch.nn.Parameter(torch.randn(8, 8))
     target = torch.randn(8, 8)
@@ -26,14 +26,14 @@ def test_muon_step_reduces_loss() -> None:
 
 
 def test_muon_rejects_non_2d_parameters() -> None:
-    r"""Muon raises a ValueError when given a parameter that is not 2D."""
+    r"""Determines if Muon raises a ValueError for a parameter that is not 2D."""
     bias = torch.nn.Parameter(torch.randn(8))
     with pytest.raises(ValueError):
         Muon([bias])
 
 
 def test_muon_zero_grad_clears_gradients() -> None:
-    r"""zero_grad sets parameter gradients to None."""
+    r"""Determines if zero_grad sets the gradients to None."""
     weight = torch.nn.Parameter(torch.randn(4, 4))
     optimizer = Muon([weight])
     weight.grad = torch.randn_like(weight)
@@ -42,7 +42,7 @@ def test_muon_zero_grad_clears_gradients() -> None:
 
 
 def test_muon_state_dict_roundtrip() -> None:
-    r"""load_state_dict restores the momentum buffer saved by state_dict."""
+    r"""Determines if load_state_dict restores the momentum buffer saved by state_dict."""
     torch.manual_seed(0)
     weight = torch.nn.Parameter(torch.randn(4, 4))
     optimizer = Muon([weight], lr=0.1)

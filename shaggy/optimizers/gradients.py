@@ -6,10 +6,7 @@ __all__ = [
 
 import torch
 
-from torch import (
-    Tensor,
-    nn,
-)
+from torch import Tensor, nn
 from typing import Optional
 
 
@@ -21,12 +18,12 @@ def safe_gradient_step(
     r"""Applies a gradient descent optimization step.
 
     Arguments:
-        optimizer: An optimizer.
-        grad_clip: Maximum gradient norm.
-        scaler: A gradient scaler for automatic mixed precision training.
+        optimizer : An optimizer.
+        grad_clip : Maximum gradient norm.
+        scaler    : A gradient scaler for automatic mixed precision training.
 
     Returns:
-        norm: Global gradient norm, before clipping.
+        norm : Global gradient norm, before clipping.
     """
 
     if scaler:

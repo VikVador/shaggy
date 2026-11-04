@@ -7,11 +7,7 @@ __all__ = [
 import torch
 
 from collections.abc import Iterable
-from typing import (
-    Any,
-    Callable,
-    Optional,
-)
+from typing import Any, Callable, Optional
 
 
 class SOAP(torch.optim.Optimizer):
@@ -22,16 +18,16 @@ class SOAP(torch.optim.Optimizer):
         | https://arxiv.org/abs/2409.11321
 
     Arguments:
-        params: Network parameters.
-        lr: learning rate.
-        betas: Adam's beta parameters (first and second) and Shampoo's beta (third).
-        eps: Adam's epsilon for numerical stability.
-        weight_decay: Weight decay coefficient [0, 1].
-        precondition_frequency: Number of steps between updates of Shampoo's preconditioner.
-        precondition_warmup: Number of initial steps for which the preconditioner is always updated.
-        precondition_1d: Whether to precondition 1-d gradients or not.
-        max_precond_size: Maximum size for the preconditioner.
-        merge_dims: Whether to merge the dimensions of gradients or not.
+        params                 : Network parameters.
+        lr                     : learning rate.
+        betas                  : Adam's beta parameters (first and second) and Shampoo's beta (third).
+        eps                    : Adam's epsilon for numerical stability.
+        weight_decay           : Weight decay coefficient [0, 1].
+        precondition_frequency : Number of steps between updates of Shampoo's preconditioner.
+        precondition_warmup    : Number of initial steps for which the preconditioner is always updated.
+        precondition_1d        : Whether to precondition 1-d gradients or not.
+        max_precond_size       : Maximum size for the preconditioner.
+        merge_dims             : Whether to merge the dimensions of gradients or not.
     """
 
     def __init__(
@@ -68,12 +64,13 @@ class SOAP(torch.optim.Optimizer):
         r"""Merges trailing dimensions of a shape to reduce the number of preconditioner matrices.
 
         Arguments:
-            shape: The original tensor shape.
-            max_precond_size: The maximum allowed size for any merged dimension.
+            shape            : The original tensor shape.
+            max_precond_size : The maximum allowed size for any merged dimension.
 
         Returns:
-            new_shape: The merged shape, with the first dimension preserved.
+            new_shape : The merged shape, with the first dimension preserved.
         """
+
         new_shape = []
         cum_size = 1
 
@@ -101,10 +98,10 @@ class SOAP(torch.optim.Optimizer):
         r"""Performs a single optimization step.
 
         Arguments:
-            closure: A closure that re-evaluates the model and returns the loss. Optional.
+            closure : A closure that re-evaluates the model and returns the loss. Optional.
 
         Returns:
-            loss: The loss returned by the closure, or None if no closure was provided.
+            loss : The loss returned by the closure, or None if no closure was provided.
         """
 
         if closure is None:
@@ -201,11 +198,11 @@ class SOAP(torch.optim.Optimizer):
         r"""Initializes the preconditioner matrices (GG and Q) in state.
 
         Arguments:
-            grad: The parameter gradient used to determine the preconditioner shape and dtype.
-            state: The optimizer state dict for the current parameter.
-            precondition_1d: Whether to precondition 1-d gradients.
-            max_precond_size: The maximum size for any preconditioner dimension.
-            merge_dims: Whether to merge trailing dimensions before building the preconditioner.
+            grad             : The parameter gradient used to determine the preconditioner shape and dtype.
+            state            : The optimizer state dict for the current parameter.
+            precondition_1d  : Whether to precondition 1-d gradients.
+            max_precond_size : The maximum size for any preconditioner dimension.
+            merge_dims       : Whether to merge trailing dimensions before building the preconditioner.
         """
 
         state["GG"] = []
@@ -240,11 +237,11 @@ class SOAP(torch.optim.Optimizer):
         r"""Updates the preconditioner matrices (GG) and recomputes the eigenbasis (Q) if needed.
 
         Arguments:
-            grad: The parameter gradient.
-            state: The optimizer state dict for the current parameter.
-            shampoo_beta: The EMA coefficient for updating the GG matrices.
-            precondition_frequency: Steps between full eigenbasis recomputations.
-            precondition_warmup: Number of initial steps where the eigenbasis is always updated.
+            grad                   : The parameter gradient.
+            state                  : The optimizer state dict for the current parameter.
+            shampoo_beta           : The EMA coefficient for updating the GG matrices.
+            precondition_frequency : Steps between full eigenbasis recomputations.
+            precondition_warmup    : Number of initial steps where the eigenbasis is always updated.
         """
 
         grad = grad.reshape(state["precond_shape"])
@@ -274,12 +271,12 @@ class SOAP(torch.optim.Optimizer):
         r"""Projects the gradient to or from the eigenbasis of the preconditioner.
 
         Arguments:
-            grad: The gradient tensor to project.
-            state: The optimizer state dict for the current parameter, containing Q.
-            back: If False, projects into the eigenbasis; if True, projects back to the original basis.
+            grad  : The gradient tensor to project.
+            state : The optimizer state dict for the current parameter, containing Q.
+            back  : If False, projects into the eigenbasis; if True, projects back to the original basis.
 
         Returns:
-            grad: The projected gradient, reshaped to the original shape.
+            grad : The projected gradient, reshaped to the original shape.
         """
 
         grad_shape = grad.shape
@@ -301,10 +298,10 @@ class SOAP(torch.optim.Optimizer):
         r"""Computes the eigenbasis of the preconditioner using torch.linalg.eigh.
 
         Arguments:
-            state: The optimizer state dict for the current parameter, containing GG.
+            state : The optimizer state dict for the current parameter, containing GG.
 
         Returns:
-            Q: A list of orthogonal matrices (or None for unpreconditioned dimensions).
+            Q : A list of orthogonal matrices (or None for unpreconditioned dimensions).
         """
 
         Q = []
@@ -328,16 +325,14 @@ class SOAP(torch.optim.Optimizer):
     def get_orthogonal_matrix_QR(self, state: dict[str, Any]) -> list[Optional[torch.Tensor]]:
         r"""Computes the eigenbasis of the preconditioner using one power iteration and QR.
 
-        More efficient than a full eigh decomposition; used for incremental updates after
-        the initial eigenbasis has been established.
-
         Arguments:
-            state: The optimizer state dict for the current parameter, containing GG and Q.
+            state : The optimizer state dict for the current parameter, containing GG and Q.
 
         Returns:
-            Q: An updated list of orthogonal matrices (or None for unpreconditioned dimensions).
+            Q : An updated list of orthogonal matrices (or None for unpreconditioned dimensions).
         """
 
+        # Cheaper than a full eigh, used once the first eigenbasis is known
         Q = []
 
         for m, q in zip(state["GG"], state["Q"], strict=True):
@@ -363,11 +358,12 @@ def adam(
     r"""Computes the Adam update: mean / sqrt(var + eps^2).
 
     Arguments:
-        mean: The first moment estimate (EMA of gradients).
-        var: The second moment estimate (EMA of squared gradients).
-        eps: Numerical stability constant.
+        mean : The first moment estimate (EMA of gradients).
+        var  : The second moment estimate (EMA of squared gradients).
+        eps  : Numerical stability constant.
 
     Returns:
-        update: The Adam parameter update, computed in-place on var.
+        update : The Adam parameter update, computed in-place on var.
     """
+
     return torch.rsqrt_(var + eps**2).mul_(mean)

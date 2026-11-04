@@ -5,8 +5,8 @@ import torch
 
 from pathlib import Path
 
-from shaggy.layers import FRMSNorm, ResidualGroup
-from shaggy.models.cae import broadcast_to_axes, create_ConvAE
+from shaggy.layers import FRMSNorm
+from shaggy.models.cae import ConvEncoder, broadcast_to_axes, create_ConvAE
 
 param_combinations = [
     (1, 3, [16], 2),
@@ -26,7 +26,7 @@ def test_cae(
     hid_channels: list,
     latent_channels: int,
 ) -> None:
-    r"""Checks forward shapes, gradient flow, and a save/load roundtrip for ConvAE."""
+    r"""Determines if a ConvAE has the right shapes, finite gradients and survives a save/load."""
     config = dict(
         in_channels=in_channels,
         out_channels=in_channels,
@@ -68,8 +68,12 @@ def test_cae(
 
     z_copy, x_reconstructed_copy = autoencoder_copy(x)
 
-    assert torch.allclose(z, z_copy)
-    assert torch.allclose(x_reconstructed, x_reconstructed_copy)
+    for p, p_copy in zip(autoencoder.parameters(), autoencoder_copy.parameters()):
+        assert torch.equal(p, p_copy)
+
+    # Two instances may run different convolution kernels, equal up to float32 rounding
+    assert torch.allclose(z, z_copy, atol=1e-5)
+    assert torch.allclose(x_reconstructed, x_reconstructed_copy, atol=1e-5)
 
 
 def test_cae_compression() -> None:
@@ -113,7 +117,7 @@ def test_cae_asymmetric() -> None:
 
 
 def test_cae_asymmetric_rejects_mismatched_scales() -> None:
-    r"""A decoder that does not undo the encoder's downsampling is rejected at build time."""
+    r"""Determines if a decoder that does not undo the encoder's downsampling is rejected."""
     with pytest.raises(AssertionError, match="downsamples"):
         create_ConvAE(
             in_channels=3,
@@ -123,42 +127,6 @@ def test_cae_asymmetric_rejects_mismatched_scales() -> None:
             config_encoder=dict(hid_channels=[8, 16, 32], hid_blocks=[1, 1, 1]),
             config_decoder=dict(hid_channels=[8, 16], hid_blocks=[1, 1]),
         )
-
-
-def test_cae_residual_in_residual() -> None:
-    r"""Determines if hid_groups turns each depth into a residual-in-residual trunk."""
-    shared = dict(
-        in_channels=3,
-        out_channels=3,
-        lat_channels=4,
-        spatial=2,
-        hid_channels=[8, 16],
-        hid_blocks=[2, 2],
-    )
-
-    flat = create_ConvAE(**shared)
-    nested = create_ConvAE(**shared, hid_groups=[2, 2])
-
-    # The nested trunks add one fusing convolution per group, plus one per depth
-    assert any(isinstance(m, ResidualGroup) for m in nested.encoder.modules())
-    assert not any(isinstance(m, ResidualGroup) for m in flat.encoder.modules())
-
-    n_flat = sum(p.numel() for p in nested.parameters())
-    assert n_flat > sum(p.numel() for p in flat.parameters())
-
-    # Same latent shape and same reconstruction shape as the flat trunk
-    x = torch.randn(2, 3, 32, 32)
-    z_flat, _ = flat(x)
-    z_nested, x_reconstructed = nested(x)
-
-    assert z_flat.shape == z_nested.shape
-    assert x_reconstructed.shape == x.shape
-
-    x_reconstructed.square().sum().backward()
-
-    for p in nested.parameters():
-        assert p.grad is not None
-        assert torch.all(torch.isfinite(p.grad))
 
 
 # --- broadcast_to_axes ---
@@ -188,6 +156,43 @@ def test_broadcast_to_axes_rejected_by_encoder() -> None:
         create_ConvAE(2, 2, 4, spatial=3, kernel_size=(3, 3), hid_channels=[8], hid_blocks=[1])
 
 
+# --- Stride per level ---
+
+
+def test_cae_stride_per_level() -> None:
+    r"""Determines if a per-level stride downsamples each axis only at its own levels."""
+    model = create_ConvAE(
+        2,
+        2,
+        4,
+        spatial=3,
+        hid_channels=[4, 8, 16],
+        hid_blocks=[1, 1, 1],
+        stride=[[2, 2, 2], [1, 2, 2]],
+    )
+    x = torch.randn(1, 2, 8, 16, 16)
+
+    z, y = model(x)
+
+    assert model.encoder.scale == model.decoder.scale == (2, 4, 4)
+    assert z.shape == (1, 4, 4, 4, 4)
+    assert y.shape == x.shape
+
+
+def test_cae_stride_per_level_wrong_length() -> None:
+    r"""Determines if a per-level stride with the wrong number of levels is rejected."""
+    with pytest.raises(AssertionError, match="one per level"):
+        create_ConvAE(
+            2,
+            2,
+            4,
+            spatial=3,
+            hid_channels=[4, 8, 16],
+            hid_blocks=[1, 1, 1],
+            stride=[[2, 2, 2], [1, 2, 2], [1, 2, 2]],
+        )
+
+
 # --- ConvEncoder / ConvDecoder security ---
 
 
@@ -196,6 +201,37 @@ def test_cae_rejects_even_kernel(kernel_size: object) -> None:
     r"""Determines if even kernel sizes, which would change the resolution, are rejected."""
     with pytest.raises(AssertionError, match="odd"):
         create_ConvAE(2, 2, 4, kernel_size=kernel_size, hid_channels=[8], hid_blocks=[1])
+
+
+@pytest.mark.parametrize("spatial", [2, 3])
+def test_cae_periodic_axis_is_equivariant_to_rolls(spatial: int) -> None:
+    r"""Determines if rolling the input along a periodic axis by the scale only rolls the latent."""
+    encoder = ConvEncoder(
+        2, 4, hid_channels=[8, 16], hid_blocks=[1, 1], spatial=spatial, periodic=(-1,)
+    )
+    x = torch.randn(2, 2, *[8] * spatial)
+
+    z, z_rolled = encoder(x), encoder(x.roll(encoder.scale[-1], dims=-1))
+
+    assert torch.allclose(z_rolled, z.roll(1, dims=-1), atol=1e-5)
+
+
+def test_cae_reflected_axis_keeps_shapes() -> None:
+    r"""Determines if a periodic longitude with a reflected latitude reconstructs the input shape."""
+    autoencoder = create_ConvAE(
+        2, 2, 4, hid_channels=[8, 16], hid_blocks=[1, 1], periodic=(-1,), reflect=(0,)
+    )
+    x = torch.randn(2, 2, 16, 32)
+    z, y = autoencoder(x)
+
+    assert z.shape == (2, *autoencoder.latent((16, 32)))
+    assert y.shape == x.shape
+
+
+def test_cae_rejects_an_axis_both_periodic_and_reflected() -> None:
+    r"""Determines if the autoencoder refuses an axis that is periodic and reflected at once."""
+    with pytest.raises(AssertionError, match="not both"):
+        create_ConvAE(2, 2, 4, hid_channels=[8], hid_blocks=[1], periodic=(-1,), reflect=(1,))
 
 
 def test_cae_rejects_mismatched_depths() -> None:
@@ -212,7 +248,6 @@ MOD_CONFIG = dict(
     lat_channels=4,
     hid_channels=[8, 16],
     hid_blocks=[1, 1],
-    hid_groups=[1, 1],
     spatial=2,
 )
 
@@ -316,3 +351,32 @@ def test_cae_latent_matches_a_forward_pass(kernel_size: int, stride: int, patch_
         encoded = model.encoder(torch.zeros(1, 2, *resolution))
 
     assert model.latent(resolution) == tuple(encoded.shape[1:])
+
+
+# --- ConvEncoder / Channel mixing ---
+
+
+@pytest.mark.parametrize("spatial", [2, 3])
+def test_encoder_mixing_projects_the_channels(spatial: int) -> None:
+    r"""Determines if the pointwise convolution maps the inputs to mix_channels, starting near identity."""
+    encoder = ConvEncoder(
+        6, 4, mix_channels=2, hid_channels=[8, 16], hid_blocks=[1, 1], spatial=spatial
+    )
+    x = torch.randn(2, 6, *[8] * spatial)
+
+    assert encoder.mix.weight.shape[:2] == (2, 6)
+    assert encoder.in_proj.conv.in_channels == 2
+    assert encoder(x).shape == (2, 4, *[4] * spatial)
+    assert torch.allclose(encoder.mix.weight.flatten(1), torch.eye(2, 6), atol=1e-2)
+
+
+def test_encoder_without_mixing_is_unchanged() -> None:
+    r"""Determines if mix_channels = None adds no layer and no parameter."""
+    config = dict(hid_channels=[8, 16], hid_blocks=[1, 1], spatial=2)
+    torch.manual_seed(0)
+    reference = ConvEncoder(6, 4, **config)
+    torch.manual_seed(0)
+    encoder = ConvEncoder(6, 4, mix_channels=None, **config)
+
+    assert isinstance(encoder.mix, torch.nn.Identity)
+    assert encoder.state_dict().keys() == reference.state_dict().keys()

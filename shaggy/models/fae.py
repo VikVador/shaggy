@@ -17,8 +17,8 @@ class FusionAE(nn.Module):
     r"""Creates a Fusion Autoencoder (FAE) from several (trained) encoder-decoder pairs.
 
     Arguments:
-        encoders: Encoder modules, one per data source.
-        decoders: Decoder modules, one per data source.
+        encoders : Encoder modules, one per data source.
+        decoders : Decoder modules, one per data source.
     """
 
     def __init__(
@@ -30,7 +30,7 @@ class FusionAE(nn.Module):
 
         # Security
         assert len(encoders) == len(decoders), (
-            f"ERROR (FusionAE) | Expected as many encoders as decoders, "
+            f"ERROR - Expected as many encoders as decoders, "
             f"got {len(encoders)} and {len(decoders)}."
         )
 
@@ -42,18 +42,16 @@ class FusionAE(nn.Module):
         r"""Encodes each data source into its own latent representation.
 
         Arguments:
-            xs: Input tensors, one per data source.
-            mod: Modulation vector, shared by every data source.
+            xs  : Input tensors, one per data source.
+            mod : Modulation vector, shared by every data source.
 
         Returns:
-            zs: Latent codes, one per data source.
+            zs : Latent codes, one per data source.
         """
 
         # Security
         n_sources = len(self.autoencoders)
-        assert len(xs) == n_sources, (
-            f"ERROR (FusionAE) | Expected {n_sources} inputs, got {len(xs)}."
-        )
+        assert len(xs) == n_sources, f"ERROR - Expected {n_sources} inputs, got {len(xs)}."
 
         return [autoencoder.encode(x, mod) for autoencoder, x in zip(self.autoencoders, xs)]
 
@@ -61,18 +59,16 @@ class FusionAE(nn.Module):
         r"""Decodes each latent code back into the ambient space of its data source.
 
         Arguments:
-            zs: Latent codes, one per data source.
-            mod: Modulation vector, shared by every data source.
+            zs  : Latent codes, one per data source.
+            mod : Modulation vector, shared by every data source.
 
         Returns:
-            xs: Reconstructed tensors, one per data source.
+            xs : Reconstructed tensors, one per data source.
         """
 
         # Security
         n_sources = len(self.autoencoders)
-        assert len(zs) == n_sources, (
-            f"ERROR (FusionAE) | Expected {n_sources} latent codes, got {len(zs)}."
-        )
+        assert len(zs) == n_sources, f"ERROR - Expected {n_sources} latent codes, got {len(zs)}."
 
         return [autoencoder.decode(z, mod) for autoencoder, z in zip(self.autoencoders, zs)]
 
@@ -83,17 +79,16 @@ class FusionAE(nn.Module):
     ) -> tuple[list[Tensor], list[Tensor]]:
         r"""Encodes and reconstructs each data source separately.
 
-        The encoding stays deterministic, only the decoding is modulated.
-
         Arguments:
-            xs: Input tensors, one per data source.
-            mod: Modulation vector, shared by every data source.
+            xs  : Input tensors, one per data source.
+            mod : Modulation vector, shared by every data source.
 
         Returns:
-            zs: Latent codes, one per data source.
-            ys: Reconstructed tensors, one per data source.
+            zs : Latent codes, one per data source.
+            ys : Reconstructed tensors, one per data source.
         """
 
+        # The encoding stays deterministic, only the decoding is modulated
         zs = self.encode(xs)
         ys = self.decode(zs, mod)
 
