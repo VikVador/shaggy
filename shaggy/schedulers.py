@@ -28,7 +28,7 @@ def warmup_cosine_decay(
         total_steps  : Total number of optimizer steps (warmup + decay combined).
 
     Returns:
-        A learning rate scheduler.
+        scheduler : Learning rate scheduler.
     """
 
     # Security

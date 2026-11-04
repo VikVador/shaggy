@@ -12,9 +12,9 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from azula.nn.layers import ConvNd, RMSNorm
-from azula.nn.utils import checkpoint
 from collections.abc import Sequence
 from torch import Tensor
+from torch.utils.checkpoint import checkpoint
 from typing import Optional, Union
 
 
@@ -22,14 +22,14 @@ class BoundaryConv(nn.Module):
     r"""Creates a convolution that pads each spatial axis with zeros, periodically or by reflection.
 
     Arguments:
-        in_channels: Number of input channels C_i.
-        out_channels: Number of output channels C_o.
-        spatial: Number of spatial dimensions N.
-        kernel_size: Kernel size, odd, for every axis or one per axis.
-        stride: Stride, for every axis or one per axis.
-        periodic: Spatial axes padded periodically, e.g. (-1,) for the longitude of (Y, X).
-        reflect: Spatial axes padded by reflection, e.g. (0,) for the latitude of (Y, X).
-        identity_init: Whether to initialize the convolution as identity or not.
+        in_channels   : Number of input channels C_i.
+        out_channels  : Number of output channels C_o.
+        spatial       : Number of spatial dimensions N.
+        kernel_size   : Kernel size, odd, for every axis or one per axis.
+        stride        : Stride, for every axis or one per axis.
+        periodic      : Spatial axes padded periodically, e.g. (-1,) for the longitude of (Y, X).
+        reflect       : Spatial axes padded by reflection, e.g. (0,) for the latitude of (Y, X).
+        identity_init : Whether to initialize the convolution as identity or not.
     """
 
     def __init__(
@@ -50,7 +50,7 @@ class BoundaryConv(nn.Module):
 
         # Security
         assert all(-spatial <= axis < spatial for axis in (*periodic, *reflect)), (
-            f"ERROR (BoundaryConv) | Axes must be in [{-spatial}, {spatial - 1}], "
+            f"ERROR - Axes must be in [{-spatial}, {spatial - 1}], "
             f"got periodic={tuple(periodic)} and reflect={tuple(reflect)}."
         )
 
@@ -58,7 +58,7 @@ class BoundaryConv(nn.Module):
         reflect = {axis % spatial for axis in reflect}
 
         assert not periodic & reflect, (
-            f"ERROR (BoundaryConv) | An axis is either periodic or reflected, not both, "
+            f"ERROR - An axis is either periodic or reflected, not both, "
             f"got both for the axes {sorted(periodic & reflect)}."
         )
 
@@ -93,12 +93,13 @@ class BoundaryConv(nn.Module):
                 self.boundaries.append((padding, mode))
 
     def forward(self, x: Tensor) -> Tensor:
-        r"""
+        r"""Applies the convolution, after padding the periodic and reflected axes.
+
         Arguments:
-            x: Input tensor (B, C_i, L_1, ..., L_N).
+            x : Input tensor (B, C_i, L_1, ..., L_N).
 
         Returns:
-            Output tensor (B, C_o, L_1 / stride_1, ..., L_N / stride_N).
+            y : Output tensor (B, C_o, L_1 / stride_1, ..., L_N / stride_N).
         """
 
         for padding, mode in self.boundaries:
@@ -117,10 +118,10 @@ class FRMSNorm(RMSNorm):
         | https://arxiv.org/abs/2506.10772
 
     Arguments:
-        channels: Number of channels C.
-        mod_features: Number of modulating features D, or None to disable the modulation.
-        spatial: Number of spatial dimensions N.
-        eps: Numerical stability term.
+        channels     : Number of channels C.
+        mod_features : Number of modulating features D, or None to disable the modulation.
+        spatial      : Number of spatial dimensions N.
+        eps          : Numerical stability term.
     """
 
     modulated = True
@@ -144,13 +145,14 @@ class FRMSNorm(RMSNorm):
             self.proj = None
 
     def forward(self, x: Tensor, mod: Optional[Tensor] = None) -> Tensor:
-        r"""
+        r"""Normalizes the input, then modulates it when a modulation vector is given.
+
         Arguments:
-            x: Input tensor (B, C, L_1, ..., L_N).
-            mod: Modulation vector (B, D).
+            x   : Input tensor (B, C, L_1, ..., L_N).
+            mod : Modulation vector (B, D).
 
         Returns:
-            Output tensor (B, C, L_1, ..., L_N).
+            y : Output tensor (B, C, L_1, ..., L_N).
         """
 
         # Normalization
@@ -173,13 +175,14 @@ class ModulatedSequential(nn.Sequential):
     modulated = True
 
     def forward(self, x: Tensor, mod: Optional[Tensor] = None) -> Tensor:
-        r"""
+        r"""Applies each module in order, forwarding the modulation to those that accept it.
+
         Arguments:
-            x: Input tensor (B, C, L_1, ..., L_N).
-            mod: Modulation vector (B, D).
+            x   : Input tensor (B, C, L_1, ..., L_N).
+            mod : Modulation vector (B, D).
 
         Returns:
-            Output tensor of the last module.
+            y : Output tensor of the last module.
         """
 
         for module in self:
@@ -192,13 +195,13 @@ class ResidualBlock(nn.Module):
     r"""Creates a (convolutional) residual block module.
 
     Arguments:
-        channels: Number of channels C.
-        ffn_factor: Channel expansion factor in the feed-forward network.
-        mod_features: Number of modulating features D, or None to disable the modulation.
-        spatial: Number of spatial dimensions N.
-        dropout: Dropout rate in [0, 1].
-        checkpointing: Whether to use gradient checkpointing or not.
-        kwargs: Keyword arguments passed to BoundaryConv (kernel_size, periodic, reflect).
+        channels      : Number of channels C.
+        ffn_factor    : Channel expansion factor in the feed-forward network.
+        mod_features  : Number of modulating features D, or None to disable the modulation.
+        spatial       : Number of spatial dimensions N.
+        dropout       : Dropout rate in [0, 1].
+        checkpointing : Whether to use gradient checkpointing or not.
+        kwargs        : Keyword arguments passed to BoundaryConv (kernel_size, periodic, reflect).
     """
 
     modulated = True
@@ -244,17 +247,19 @@ class ResidualBlock(nn.Module):
         return x + self.ffn(self.norm(x, mod))
 
     def forward(self, x: Tensor, mod: Optional[Tensor] = None) -> Tensor:
-        r"""
+        r"""Adds the output of the feed-forward network to the input.
+
         Arguments:
-            x: Input tensor (B, C, L_1, ..., L_N).
-            mod: Modulation vector (B, D).
+            x   : Input tensor (B, C, L_1, ..., L_N).
+            mod : Modulation vector (B, D).
 
         Returns:
-            Output tensor (B, C, L_1, ..., L_N).
+            y : Output tensor (B, C, L_1, ..., L_N).
         """
 
-        if self.checkpointing:
-            return checkpoint(self._forward, reentrant=not self.training)(x, mod)
+        # PyTorch's checkpoint is traced by torch.compile, azula's breaks the graph at every block
+        if self.checkpointing and self.training:
+            return checkpoint(self._forward, x, mod, use_reentrant=False)
         else:
             return self._forward(x, mod)
 
@@ -263,14 +268,14 @@ class ResidualTrunk(nn.Module):
     r"""Creates the residual trunk of a single depth.
 
     Arguments:
-        channels: Number of channels C.
-        num_blocks: Number of residual blocks.
-        spatial: Number of spatial dimensions N.
-        ffn_factor: Channel expansion factor in the feed-forward networks.
-        mod_features: Number of modulating features D, or None to disable the modulation.
-        dropout: Dropout rate in [0, 1].
-        checkpointing: Whether to use gradient checkpointing or not.
-        kwargs: Keyword arguments passed to convolutional layers.
+        channels      : Number of channels C.
+        num_blocks    : Number of residual blocks.
+        spatial       : Number of spatial dimensions N.
+        ffn_factor    : Channel expansion factor in the feed-forward networks.
+        mod_features  : Number of modulating features D, or None to disable the modulation.
+        dropout       : Dropout rate in [0, 1].
+        checkpointing : Whether to use gradient checkpointing or not.
+        kwargs        : Keyword arguments passed to convolutional layers.
     """
 
     modulated = True
@@ -302,12 +307,13 @@ class ResidualTrunk(nn.Module):
         ])
 
     def forward(self, x: Tensor, mod: Optional[Tensor] = None) -> Tensor:
-        r"""
+        r"""Applies the residual blocks in order.
+
         Arguments:
-            x: Input tensor (B, C, L_1, ..., L_N).
-            mod: Modulation vector (B, D).
+            x   : Input tensor (B, C, L_1, ..., L_N).
+            mod : Modulation vector (B, D).
 
         Returns:
-            Output tensor (B, C, L_1, ..., L_N).
+            y : Output tensor (B, C, L_1, ..., L_N).
         """
         return self.blocks(x, mod)
