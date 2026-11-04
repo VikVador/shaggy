@@ -1,4 +1,4 @@
-r"""Tests for Shaggy layers: FRMSNorm, ResidualBlock, ResidualGroup, ResidualTrunk."""
+r"""Tests for Shaggy layers: BoundaryConv, FRMSNorm, ResidualBlock, ResidualTrunk."""
 
 import pytest
 import torch
@@ -6,9 +6,9 @@ import torch.nn as nn
 
 from azula.nn.layers import RMSNorm
 
-from shaggy.layers import FRMSNorm, ResidualBlock, ResidualGroup, ResidualTrunk
+from shaggy.layers import BoundaryConv, FRMSNorm, ResidualBlock, ResidualTrunk
 
-CONV = dict(kernel_size=3, padding=1)
+CONV = dict(kernel_size=3)
 
 
 def relative_deviation(y: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
@@ -23,6 +23,69 @@ def relative_deviation(y: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
     """
 
     return (y - x).pow(2).mean().sqrt() / x.pow(2).mean().sqrt()
+
+
+# --- BoundaryConv ---
+
+
+@pytest.mark.parametrize("spatial", [1, 2, 3])
+def test_boundaryconv_matches_a_plain_convolution(spatial: int) -> None:
+    r"""Determines if zero padding on every axis matches a plain convolution with the same weights."""
+    conv = BoundaryConv(4, 6, spatial=spatial, kernel_size=3)
+    plain = getattr(nn, f"Conv{spatial}d")(4, 6, kernel_size=3, padding=1)
+    plain.load_state_dict(conv.state_dict())
+    x = torch.randn(2, 4, *[8] * spatial)
+
+    assert torch.allclose(conv(x), plain(x), atol=1e-6)
+
+
+@pytest.mark.parametrize(
+    "mode, periodic, reflect", [("circular", (0, 1), ()), ("reflect", (), (0, 1))]
+)
+def test_boundaryconv_matches_a_padded_convolution(
+    mode: str, periodic: tuple, reflect: tuple
+) -> None:
+    r"""Determines if padding every axis periodically or by reflection matches PyTorch's padding modes."""
+    conv = BoundaryConv(4, 6, spatial=2, kernel_size=(3, 5), periodic=periodic, reflect=reflect)
+    plain = nn.Conv2d(4, 6, kernel_size=(3, 5), padding=(1, 2), padding_mode=mode)
+    plain.load_state_dict(conv.state_dict())
+    x = torch.randn(2, 4, 8, 12)
+
+    assert torch.allclose(conv(x), plain(x), atol=1e-6)
+
+
+def test_boundaryconv_is_equivariant_to_rolls_along_periodic_axes() -> None:
+    r"""Determines if rolling the input along the periodic axis only rolls the output."""
+    conv = BoundaryConv(4, 6, spatial=2, kernel_size=3, periodic=(-1,), reflect=(0,))
+    x = torch.randn(2, 4, 8, 12)
+
+    assert torch.allclose(conv(x.roll(5, dims=-1)), conv(x).roll(5, dims=-1), atol=1e-6)
+    assert not torch.allclose(conv(x.roll(3, dims=-2)), conv(x).roll(3, dims=-2), atol=1e-3)
+
+
+@pytest.mark.parametrize("periodic, reflect", [((1,), (1,)), ((-1,), (2,)), ((0, 2), (-1,))])
+def test_boundaryconv_rejects_an_axis_both_periodic_and_reflected(
+    periodic: tuple, reflect: tuple
+) -> None:
+    r"""Determines if an axis cannot be periodic and reflected at the same time."""
+    with pytest.raises(AssertionError, match="not both"):
+        BoundaryConv(4, 6, spatial=3, periodic=periodic, reflect=reflect)
+
+
+@pytest.mark.parametrize("periodic, reflect", [((2,), ()), ((), (-3,))])
+def test_boundaryconv_rejects_axes_out_of_range(periodic: tuple, reflect: tuple) -> None:
+    r"""Determines if axes beyond the spatial dimensions are rejected."""
+    with pytest.raises(AssertionError, match="Axes must be in"):
+        BoundaryConv(4, 6, spatial=2, periodic=periodic, reflect=reflect)
+
+
+@pytest.mark.parametrize("stride", [1, 2])
+def test_boundaryconv_preserves_the_resolution(stride: int) -> None:
+    r"""Determines if the output is the input divided by the stride, whatever the boundaries."""
+    conv = BoundaryConv(4, 6, spatial=3, kernel_size=3, stride=stride, periodic=(2,), reflect=(1,))
+    x = torch.randn(2, 4, 8, 8, 8)
+
+    assert conv(x).shape == (2, 6, *[8 // stride] * 3)
 
 
 # --- FRMSNorm ---
@@ -181,81 +244,21 @@ def test_residualblock_checkpointing_is_transparent() -> None:
     assert torch.allclose(grad_plain, grad_ckpt)
 
 
-# --- ResidualGroup ---
-
-
-def test_residualgroup_preserves_shape() -> None:
-    r"""Determines if the group keeps the shape of its input."""
-    blocks = [ResidualBlock(8, spatial=2, **CONV) for _ in range(3)]
-    group = ResidualGroup(8, blocks, spatial=2, **CONV)
-    x = torch.randn(2, 8, 8, 8)
-
-    assert group(x).shape == x.shape
-
-
-def test_residualgroup_starts_near_identity() -> None:
-    r"""Determines if the group barely modifies its input at initialization."""
-    blocks = [ResidualBlock(32, spatial=2, **CONV) for _ in range(3)]
-    group = ResidualGroup(32, blocks, spatial=2, **CONV)
-    x = torch.randn(2, 32, 16, 16)
-
-    assert relative_deviation(group(x), x) < 0.01
-
-
-def test_residualgroup_long_skip() -> None:
-    r"""Determines if the group is the identity once its fuse is silenced, whatever its blocks."""
-    blocks = [ResidualBlock(8, spatial=2, **CONV) for _ in range(2)]
-
-    for block in blocks:
-        block.ffn[-1].weight.data.normal_()
-
-    group = ResidualGroup(8, blocks, spatial=2, **CONV)
-    group.fuse.weight.data.zero_()
-    group.fuse.bias.data.zero_()
-
-    x = torch.randn(2, 8, 8, 8)
-
-    assert torch.allclose(group(x), x)
-
-
-def test_residualgroup_nests() -> None:
-    r"""Determines if a group accepts other groups as blocks, i.e. residual-in-residual."""
-    inner = [ResidualGroup(8, [ResidualBlock(8, spatial=2, **CONV)], spatial=2, **CONV)]
-    outer = ResidualGroup(8, inner, spatial=2, **CONV)
-    x = torch.randn(2, 8, 8, 8)
-
-    assert outer(x).shape == x.shape
-
-
 # --- ResidualTrunk ---
 
 
 def test_residualtrunk_flat_structure() -> None:
-    r"""Determines if num_groups = 0 builds a plain stack of num_blocks blocks, no long skip."""
-    trunk = ResidualTrunk(8, num_blocks=3, num_groups=0, spatial=2, **CONV)
+    r"""Determines if the trunk is a plain stack of num_blocks blocks."""
+    trunk = ResidualTrunk(8, num_blocks=3, spatial=2, **CONV)
 
     assert isinstance(trunk.blocks, nn.Sequential)
     assert len(trunk.blocks) == 3
     assert all(isinstance(block, ResidualBlock) for block in trunk.blocks)
-    assert not any(isinstance(m, ResidualGroup) for m in trunk.modules())
-
-
-def test_residualtrunk_grouped_structure() -> None:
-    r"""Determines if num_groups > 0 nests num_groups groups of num_blocks blocks in one skip."""
-    trunk = ResidualTrunk(8, num_blocks=2, num_groups=3, spatial=2, **CONV)
-
-    assert isinstance(trunk.blocks, ResidualGroup)
-    assert len(trunk.blocks.blocks) == 3
-
-    for group in trunk.blocks.blocks:
-        assert isinstance(group, ResidualGroup)
-        assert len(group.blocks) == 2
-        assert all(isinstance(block, ResidualBlock) for block in group.blocks)
 
 
 def test_residualtrunk_blocks_are_independent() -> None:
     r"""Determines if every block is a distinct module, i.e. weights are not shared."""
-    trunk = ResidualTrunk(8, num_blocks=2, num_groups=2, spatial=2, **CONV)
+    trunk = ResidualTrunk(8, num_blocks=4, spatial=2, **CONV)
 
     blocks = [m for m in trunk.modules() if isinstance(m, ResidualBlock)]
 
@@ -264,19 +267,17 @@ def test_residualtrunk_blocks_are_independent() -> None:
 
 
 @pytest.mark.parametrize("spatial", [1, 2, 3])
-@pytest.mark.parametrize("num_groups", [0, 2])
-def test_residualtrunk_preserves_shape(spatial: int, num_groups: int) -> None:
-    r"""Determines if the trunk keeps the shape of its input, flat or grouped, in 1D, 2D and 3D."""
-    trunk = ResidualTrunk(8, num_blocks=2, num_groups=num_groups, spatial=spatial, **CONV)
+def test_residualtrunk_preserves_shape(spatial: int) -> None:
+    r"""Determines if the trunk keeps the shape of its input, in 1D, 2D and 3D."""
+    trunk = ResidualTrunk(8, num_blocks=2, spatial=spatial, **CONV)
     x = torch.randn(2, 8, *[6] * spatial)
 
     assert trunk(x).shape == x.shape
 
 
-@pytest.mark.parametrize("num_groups", [0, 2])
-def test_residualtrunk_starts_near_identity(num_groups: int) -> None:
+def test_residualtrunk_starts_near_identity() -> None:
     r"""Determines if the whole trunk barely modifies its input at initialization."""
-    trunk = ResidualTrunk(32, num_blocks=4, num_groups=num_groups, spatial=2, **CONV)
+    trunk = ResidualTrunk(32, num_blocks=4, spatial=2, **CONV)
     x = torch.randn(2, 32, 16, 16)
 
     assert relative_deviation(trunk(x), x) < 0.05
@@ -284,16 +285,15 @@ def test_residualtrunk_starts_near_identity(num_groups: int) -> None:
 
 def test_residualtrunk_empty() -> None:
     r"""Determines if a flat trunk without blocks is exactly the identity."""
-    trunk = ResidualTrunk(8, num_blocks=0, num_groups=0, spatial=2, **CONV)
+    trunk = ResidualTrunk(8, num_blocks=0, spatial=2, **CONV)
     x = torch.randn(2, 8, 8, 8)
 
     assert torch.equal(trunk(x), x)
 
 
-@pytest.mark.parametrize("num_groups", [0, 2])
-def test_residualtrunk_gradients(num_groups: int) -> None:
-    r"""Determines if gradients reach the input and every parameter, flat or grouped."""
-    trunk = ResidualTrunk(8, num_blocks=2, num_groups=num_groups, spatial=2, **CONV)
+def test_residualtrunk_gradients() -> None:
+    r"""Determines if gradients reach the input and every parameter."""
+    trunk = ResidualTrunk(8, num_blocks=2, spatial=2, **CONV)
     x = torch.randn(2, 8, 8, 8, requires_grad=True)
 
     trunk(x).square().sum().backward()

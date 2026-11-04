@@ -1,20 +1,112 @@
 r"""Building blocks for Autoencoders."""
 
 __all__ = [
+    "BoundaryConv",
     "FRMSNorm",
     "ModulatedSequential",
     "ResidualBlock",
-    "ResidualGroup",
     "ResidualTrunk",
 ]
 
 import torch.nn as nn
+import torch.nn.functional as F
 
 from azula.nn.layers import ConvNd, RMSNorm
 from azula.nn.utils import checkpoint
 from collections.abc import Sequence
 from torch import Tensor
-from typing import Optional
+from typing import Optional, Union
+
+
+class BoundaryConv(nn.Module):
+    r"""Creates a convolution that pads each spatial axis with zeros, periodically or by reflection.
+
+    Arguments:
+        in_channels: Number of input channels C_i.
+        out_channels: Number of output channels C_o.
+        spatial: Number of spatial dimensions N.
+        kernel_size: Kernel size, odd, for every axis or one per axis.
+        stride: Stride, for every axis or one per axis.
+        periodic: Spatial axes padded periodically, e.g. (-1,) for the longitude of (Y, X).
+        reflect: Spatial axes padded by reflection, e.g. (0,) for the latitude of (Y, X).
+        identity_init: Whether to initialize the convolution as identity or not.
+    """
+
+    def __init__(
+        self,
+        in_channels: int,
+        out_channels: int,
+        spatial: int = 2,
+        kernel_size: Union[int, Sequence[int]] = 3,
+        stride: Union[int, Sequence[int]] = 1,
+        periodic: Sequence[int] = (),
+        reflect: Sequence[int] = (),
+        identity_init: bool = False,
+    ) -> None:
+        super().__init__()
+
+        if isinstance(kernel_size, int):
+            kernel_size = (kernel_size,) * spatial
+
+        # Security
+        assert all(-spatial <= axis < spatial for axis in (*periodic, *reflect)), (
+            f"ERROR (BoundaryConv) | Axes must be in [{-spatial}, {spatial - 1}], "
+            f"got periodic={tuple(periodic)} and reflect={tuple(reflect)}."
+        )
+
+        periodic = {axis % spatial for axis in periodic}
+        reflect = {axis % spatial for axis in reflect}
+
+        assert not periodic & reflect, (
+            f"ERROR (BoundaryConv) | An axis is either periodic or reflected, not both, "
+            f"got both for the axes {sorted(periodic & reflect)}."
+        )
+
+        conv = ConvNd(
+            in_channels,
+            out_channels,
+            spatial=spatial,
+            kernel_size=kernel_size,
+            stride=stride,
+            identity_init=identity_init,
+        )
+
+        # The parameters keep the names of a plain convolution, so saved weights still load
+        self.weight, self.bias = conv.weight, conv.bias
+        self.in_channels, self.out_channels = in_channels, out_channels
+        self.stride = conv.stride
+        self.convolution = getattr(F, f"conv{spatial}d")
+
+        # The convolution pads the axes with zeros itself, the other axes are padded beforehand
+        self.padding = tuple(
+            0 if axis in periodic | reflect else k // 2 for axis, k in enumerate(kernel_size)
+        )
+
+        # F.pad lists the paddings from the last axis backwards, and needs one pair for every axis
+        self.boundaries = []
+
+        for axis, k in enumerate(kernel_size):
+            if axis in periodic | reflect and k > 1:
+                padding = [0, 0] * spatial
+                padding[2 * (spatial - 1 - axis) : 2 * (spatial - axis)] = [k // 2] * 2
+                mode = "circular" if axis in periodic else "reflect"
+                self.boundaries.append((padding, mode))
+
+    def forward(self, x: Tensor) -> Tensor:
+        r"""
+        Arguments:
+            x: Input tensor (B, C_i, L_1, ..., L_N).
+
+        Returns:
+            Output tensor (B, C_o, L_1 / stride_1, ..., L_N / stride_N).
+        """
+
+        for padding, mode in self.boundaries:
+            x = F.pad(x, padding, mode=mode)
+
+        return self.convolution(
+            x, self.weight, self.bias, stride=self.stride, padding=self.padding
+        )
 
 
 class FRMSNorm(RMSNorm):
@@ -106,7 +198,7 @@ class ResidualBlock(nn.Module):
         spatial: Number of spatial dimensions N.
         dropout: Dropout rate in [0, 1].
         checkpointing: Whether to use gradient checkpointing or not.
-        kwargs: Keyword arguments passed to convolutional layers.
+        kwargs: Keyword arguments passed to BoundaryConv (kernel_size, periodic, reflect).
     """
 
     modulated = True
@@ -126,7 +218,7 @@ class ResidualBlock(nn.Module):
         self.checkpointing = checkpointing
         self.norm = FRMSNorm(channels, mod_features=mod_features, spatial=spatial)
         self.ffn = nn.Sequential(
-            ConvNd(
+            BoundaryConv(
                 channels,
                 channels * ffn_factor,
                 spatial=spatial,
@@ -134,7 +226,7 @@ class ResidualBlock(nn.Module):
             ),
             nn.SiLU(),
             nn.Identity() if dropout is None else nn.Dropout(dropout),
-            ConvNd(
+            BoundaryConv(
                 channels * ffn_factor,
                 channels,
                 spatial=spatial,
@@ -167,59 +259,12 @@ class ResidualBlock(nn.Module):
             return self._forward(x, mod)
 
 
-class ResidualGroup(nn.Module):
-    r"""Creates a long-range residual blocks module.
-
-    References:
-        | Image Super-Resolution Using Very Deep Residual Channel Attention Networks (Zhang et al., 2018)
-        | https://arxiv.org/abs/1807.02758
-
-    Arguments:
-        channels: Number of channels C.
-        blocks: Blocks to wrap, applied in order.
-        spatial: Number of spatial dimensions N.
-        kwargs: Keyword arguments passed to convolutional layers.
-    """
-
-    modulated = True
-
-    def __init__(
-        self,
-        channels: int,
-        blocks: Sequence[nn.Module],
-        spatial: int = 2,
-        **kwargs,
-    ) -> None:
-        super().__init__()
-
-        self.blocks = ModulatedSequential(*blocks)
-
-        # Fusing convolution after long-range skip
-        self.fuse = ConvNd(channels, channels, spatial=spatial, **kwargs)
-
-        # Identity initialization
-        self.fuse.weight.data.mul_(1e-2)
-        self.fuse.bias.data.zero_()
-
-    def forward(self, x: Tensor, mod: Optional[Tensor] = None) -> Tensor:
-        r"""
-        Arguments:
-            x: Input tensor (B, C, L_1, ..., L_N).
-            mod: Modulation vector (B, D).
-
-        Returns:
-            Output tensor (B, C, L_1, ..., L_N).
-        """
-        return x + self.fuse(self.blocks(x, mod))
-
-
 class ResidualTrunk(nn.Module):
     r"""Creates the residual trunk of a single depth.
 
     Arguments:
         channels: Number of channels C.
-        num_blocks: Number of residual blocks, per group when grouped.
-        num_groups: Number of residual groups, or 0 for a flat stack.
+        num_blocks: Number of residual blocks.
         spatial: Number of spatial dimensions N.
         ffn_factor: Channel expansion factor in the feed-forward networks.
         mod_features: Number of modulating features D, or None to disable the modulation.
@@ -234,7 +279,6 @@ class ResidualTrunk(nn.Module):
         self,
         channels: int,
         num_blocks: int,
-        num_groups: int,
         spatial: int = 2,
         ffn_factor: int = 1,
         mod_features: Optional[int] = None,
@@ -244,36 +288,18 @@ class ResidualTrunk(nn.Module):
     ) -> None:
         super().__init__()
 
-        block = lambda: ResidualBlock(
-            channels,
-            ffn_factor=ffn_factor,
-            mod_features=mod_features,
-            spatial=spatial,
-            dropout=dropout,
-            checkpointing=checkpointing,
-            **kwargs,
-        )
-
-        # Simple stack of residual blocks
-        if num_groups == 0:
-            self.blocks = ModulatedSequential(
-                *[block() for _ in range(num_blocks)],
+        self.blocks = ModulatedSequential(*[
+            ResidualBlock(
+                channels,
+                ffn_factor=ffn_factor,
+                mod_features=mod_features,
+                spatial=spatial,
+                dropout=dropout,
+                checkpointing=checkpointing,
+                **kwargs,
             )
-
-        # Nested residual groups of residual blocks
-        else:
-            groups = [
-                ResidualGroup(
-                    channels,
-                    [block() for _ in range(num_blocks)],
-                    spatial=spatial,
-                    **kwargs,
-                )
-                for _ in range(num_groups)
-            ]
-
-            # Adding a final skip connection to the trunk
-            self.blocks = ResidualGroup(channels, groups, spatial=spatial, **kwargs)
+            for _ in range(num_blocks)
+        ])
 
     def forward(self, x: Tensor, mod: Optional[Tensor] = None) -> Tensor:
         r"""
