@@ -15,7 +15,7 @@ from collections.abc import Sequence
 from torch import Tensor
 from typing import Any, Optional, Union
 
-from shaggy.layers import FRMSNorm, ModulatedSequential, ResidualTrunk
+from shaggy.layers import BoundaryConv, FRMSNorm, ModulatedSequential, ResidualTrunk
 from shaggy.models.ae import AutoEncoder
 
 
@@ -68,7 +68,6 @@ class ConvEncoder(nn.Module):
         mix_channels: Number of channels of a pointwise convolution mixing the inputs first, or None.
         hid_channels: Number of channels at each depth.
         hid_blocks: Number of residual blocks at each depth.
-        hid_groups: Number of residual groups at each depth, or 0 for a flat stack.
         kernel_size: Kernel size of all convolutions.
         stride: Stride of the downsampling convolutions, for every level or one per level.
         pixel_shuffle: Whether to downsample with pixel shuffling or not.
@@ -76,7 +75,8 @@ class ConvEncoder(nn.Module):
         mod_features: Number of modulating features D, or None to disable the modulation.
         spatial: Number of spatial dimensions N.
         patch_size: Patch size applied before the first convolution.
-        periodic: Whether the spatial dimensions are periodic or not.
+        periodic: Spatial axes padded periodically, e.g. (-1,) for the longitude of (Y, X).
+        reflect: Spatial axes padded by reflection, e.g. (0,) for the latitude of (Y, X).
         dropout: Dropout rate in [0, 1].
         checkpointing: Whether to use gradient checkpointing or not.
         identity_init: Whether to initialize projection and resampling layers as identity or not.
@@ -89,7 +89,6 @@ class ConvEncoder(nn.Module):
         mix_channels: Optional[int] = None,
         hid_channels: Sequence[int] = (64, 128, 256),
         hid_blocks: Sequence[int] = (3, 3, 3),
-        hid_groups: Optional[Sequence[int]] = None,
         kernel_size: Union[int, Sequence[int]] = 3,
         stride: Union[int, Sequence[Union[int, Sequence[int]]]] = 2,
         pixel_shuffle: bool = True,
@@ -97,34 +96,28 @@ class ConvEncoder(nn.Module):
         mod_features: Optional[int] = None,
         spatial: int = 2,
         patch_size: Union[int, Sequence[int]] = 1,
-        periodic: bool = False,
+        periodic: Sequence[int] = (),
+        reflect: Sequence[int] = (),
         dropout: Optional[float] = None,
         checkpointing: bool = False,
         identity_init: bool = True,
     ) -> None:
         super().__init__()
 
-        if hid_groups is None:
-            hid_groups = [0] * len(hid_channels)
-
         kernel_size = broadcast_to_axes(kernel_size, spatial)
         strides = broadcast_to_levels(stride, len(hid_channels) - 1, spatial)
         patch_size = broadcast_to_axes(patch_size, spatial)
 
         # Security
-        assert len(hid_channels) == len(hid_blocks) == len(hid_groups), (
-            "ERROR (ConvEncoder) | hid_channels, hid_blocks and hid_groups must match in length."
+        assert len(hid_channels) == len(hid_blocks), (
+            "ERROR (ConvEncoder) | hid_channels and hid_blocks must match in length."
         )
 
         assert all(k % 2 == 1 for k in kernel_size), (
             "ERROR (ConvEncoder) | Kernel sizes must be odd to preserve the spatial dimensions."
         )
 
-        kwargs = dict(
-            kernel_size=kernel_size,
-            padding=tuple(k // 2 for k in kernel_size),
-            padding_mode="circular" if periodic else "zeros",
-        )
+        kwargs = dict(kernel_size=kernel_size, periodic=periodic, reflect=reflect)
 
         self.in_channels = in_channels
         self.scale = tuple(p * math.prod(s[a] for s in strides) for a, p in enumerate(patch_size))
@@ -145,7 +138,7 @@ class ConvEncoder(nn.Module):
 
         self.patch = Patchify(patch_shape=patch_size)
 
-        self.in_proj = ConvNd(
+        self.in_proj = BoundaryConv(
             math.prod(patch_size) * in_channels,
             hid_channels[0],
             spatial=spatial,
@@ -155,7 +148,7 @@ class ConvEncoder(nn.Module):
 
         self.descent = ModulatedSequential()
 
-        for i, (num_blocks, num_groups) in enumerate(zip(hid_blocks, hid_groups)):
+        for i, num_blocks in enumerate(hid_blocks):
             if i > 0:
                 self.descent.append(
                     FRMSNorm(hid_channels[i - 1], mod_features=mod_features, spatial=spatial)
@@ -165,7 +158,7 @@ class ConvEncoder(nn.Module):
                     self.descent.append(
                         nn.Sequential(
                             Patchify(patch_shape=strides[i - 1]),
-                            ConvNd(
+                            BoundaryConv(
                                 hid_channels[i - 1] * math.prod(strides[i - 1]),
                                 hid_channels[i],
                                 spatial=spatial,
@@ -176,7 +169,7 @@ class ConvEncoder(nn.Module):
                     )
                 else:
                     self.descent.append(
-                        ConvNd(
+                        BoundaryConv(
                             hid_channels[i - 1],
                             hid_channels[i],
                             spatial=spatial,
@@ -190,7 +183,6 @@ class ConvEncoder(nn.Module):
                 ResidualTrunk(
                     hid_channels[i],
                     num_blocks=num_blocks,
-                    num_groups=num_groups,
                     spatial=spatial,
                     ffn_factor=ffn_factor,
                     mod_features=mod_features,
@@ -202,7 +194,7 @@ class ConvEncoder(nn.Module):
 
         self.out_norm = FRMSNorm(hid_channels[-1], mod_features=mod_features, spatial=spatial)
 
-        self.out_proj = ConvNd(
+        self.out_proj = BoundaryConv(
             hid_channels[-1],
             out_channels,
             spatial=spatial,
@@ -233,7 +225,6 @@ class ConvDecoder(nn.Module):
         out_channels: Number of output channels C_o.
         hid_channels: Number of channels at each depth.
         hid_blocks: Number of residual blocks at each depth.
-        hid_groups: Number of residual groups at each depth, or 0 for a flat stack.
         kernel_size: Kernel size of all convolutions.
         stride: Stride of the upsampling convolutions, for every level or one per level.
         pixel_shuffle: Whether to upsample with pixel shuffling or not.
@@ -241,7 +232,8 @@ class ConvDecoder(nn.Module):
         mod_features: Number of modulating features D, or None to disable the modulation.
         spatial: Number of spatial dimensions N.
         patch_size: Patch size applied after the last convolution.
-        periodic: Whether the spatial dimensions are periodic or not.
+        periodic: Spatial axes padded periodically, e.g. (-1,) for the longitude of (Y, X).
+        reflect: Spatial axes padded by reflection, e.g. (0,) for the latitude of (Y, X).
         dropout: Dropout rate in [0, 1].
         checkpointing: Whether to use gradient checkpointing or not.
         identity_init: Whether to initialize projection and resampling layers as identity or not.
@@ -253,7 +245,6 @@ class ConvDecoder(nn.Module):
         out_channels: int,
         hid_channels: Sequence[int] = (64, 128, 256),
         hid_blocks: Sequence[int] = (3, 3, 3),
-        hid_groups: Optional[Sequence[int]] = None,
         kernel_size: Union[int, Sequence[int]] = 3,
         stride: Union[int, Sequence[Union[int, Sequence[int]]]] = 2,
         pixel_shuffle: bool = True,
@@ -261,38 +252,32 @@ class ConvDecoder(nn.Module):
         mod_features: Optional[int] = None,
         spatial: int = 2,
         patch_size: Union[int, Sequence[int]] = 1,
-        periodic: bool = False,
+        periodic: Sequence[int] = (),
+        reflect: Sequence[int] = (),
         dropout: Optional[float] = None,
         checkpointing: bool = False,
         identity_init: bool = True,
     ) -> None:
         super().__init__()
 
-        if hid_groups is None:
-            hid_groups = [0] * len(hid_channels)
-
         kernel_size = broadcast_to_axes(kernel_size, spatial)
         strides = broadcast_to_levels(stride, len(hid_channels) - 1, spatial)
         patch_size = broadcast_to_axes(patch_size, spatial)
 
         # Security
-        assert len(hid_channels) == len(hid_blocks) == len(hid_groups), (
-            "ERROR (ConvDecoder) | hid_channels, hid_blocks and hid_groups must match in length."
+        assert len(hid_channels) == len(hid_blocks), (
+            "ERROR (ConvDecoder) | hid_channels and hid_blocks must match in length."
         )
 
         assert all(k % 2 == 1 for k in kernel_size), (
             "ERROR (ConvDecoder) | Kernel sizes must be odd to preserve the spatial dimensions."
         )
 
-        kwargs = dict(
-            kernel_size=kernel_size,
-            padding=tuple(k // 2 for k in kernel_size),
-            padding_mode="circular" if periodic else "zeros",
-        )
+        kwargs = dict(kernel_size=kernel_size, periodic=periodic, reflect=reflect)
 
         self.scale = tuple(p * math.prod(s[a] for s in strides) for a, p in enumerate(patch_size))
 
-        self.in_proj = ConvNd(
+        self.in_proj = BoundaryConv(
             in_channels,
             hid_channels[-1],
             spatial=spatial,
@@ -307,7 +292,6 @@ class ConvDecoder(nn.Module):
                 ResidualTrunk(
                     hid_channels[i],
                     num_blocks=hid_blocks[i],
-                    num_groups=hid_groups[i],
                     spatial=spatial,
                     ffn_factor=ffn_factor,
                     mod_features=mod_features,
@@ -325,7 +309,7 @@ class ConvDecoder(nn.Module):
                 if pixel_shuffle:
                     self.ascent.append(
                         nn.Sequential(
-                            ConvNd(
+                            BoundaryConv(
                                 hid_channels[i],
                                 hid_channels[i - 1] * math.prod(strides[i - 1]),
                                 spatial=spatial,
@@ -339,7 +323,7 @@ class ConvDecoder(nn.Module):
                     self.ascent.append(
                         nn.Sequential(
                             nn.Upsample(scale_factor=strides[i - 1], mode="nearest"),
-                            ConvNd(
+                            BoundaryConv(
                                 hid_channels[i],
                                 hid_channels[i - 1],
                                 spatial=spatial,
@@ -351,7 +335,7 @@ class ConvDecoder(nn.Module):
 
         self.out_norm = FRMSNorm(hid_channels[0], mod_features=mod_features, spatial=spatial)
 
-        self.out_proj = ConvNd(
+        self.out_proj = BoundaryConv(
             hid_channels[0],
             math.prod(patch_size) * out_channels,
             spatial=spatial,
