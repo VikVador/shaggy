@@ -1,4 +1,4 @@
-r"""Tests for Shaggy layers: BoundaryConv, FRMSNorm, ResidualBlock, ResidualTrunk."""
+r"""Tests for Shaggy layers: BoundaryConv, FRMSNorm, ResidualBlock."""
 
 import pytest
 import torch
@@ -6,7 +6,7 @@ import torch.nn as nn
 
 from azula.nn.layers import RMSNorm
 
-from shaggy.layers import BoundaryConv, FRMSNorm, ResidualBlock, ResidualTrunk
+from shaggy.layers import BoundaryConv, FRMSNorm, ModulatedSequential, ResidualBlock
 
 CONV = dict(kernel_size=3)
 
@@ -244,75 +244,17 @@ def test_residualblock_checkpointing_is_transparent() -> None:
     assert torch.allclose(grad_plain, grad_ckpt)
 
 
-# --- ResidualTrunk ---
-
-
-def test_residualtrunk_flat_structure() -> None:
-    r"""Determines if the trunk is a plain stack of num_blocks blocks."""
-    trunk = ResidualTrunk(8, num_blocks=3, spatial=2, **CONV)
-
-    assert isinstance(trunk.blocks, nn.Sequential)
-    assert len(trunk.blocks) == 3
-    assert all(isinstance(block, ResidualBlock) for block in trunk.blocks)
-
-
-def test_residualtrunk_blocks_are_independent() -> None:
-    r"""Determines if every block is a distinct module, i.e. weights are not shared."""
-    trunk = ResidualTrunk(8, num_blocks=4, spatial=2, **CONV)
-
-    blocks = [m for m in trunk.modules() if isinstance(m, ResidualBlock)]
-
-    assert len(blocks) == 4
-    assert len({id(block.ffn[0].weight) for block in blocks}) == 4
-
-
-@pytest.mark.parametrize("spatial", [1, 2, 3])
-def test_residualtrunk_preserves_shape(spatial: int) -> None:
-    r"""Determines if the trunk keeps the shape of its input, in 1D, 2D and 3D."""
-    trunk = ResidualTrunk(8, num_blocks=2, spatial=spatial, **CONV)
-    x = torch.randn(2, 8, *[6] * spatial)
-
-    assert trunk(x).shape == x.shape
-
-
-def test_residualtrunk_starts_near_identity() -> None:
-    r"""Determines if the whole trunk barely modifies its input at initialization."""
-    trunk = ResidualTrunk(32, num_blocks=4, spatial=2, **CONV)
-    x = torch.randn(2, 32, 16, 16)
-
-    assert relative_deviation(trunk(x), x) < 0.05
-
-
-def test_residualtrunk_empty() -> None:
-    r"""Determines if a flat trunk without blocks is exactly the identity."""
-    trunk = ResidualTrunk(8, num_blocks=0, spatial=2, **CONV)
-    x = torch.randn(2, 8, 8, 8)
-
-    assert torch.equal(trunk(x), x)
-
-
-def test_residualtrunk_gradients() -> None:
-    r"""Determines if gradients reach the input and every parameter."""
-    trunk = ResidualTrunk(8, num_blocks=2, spatial=2, **CONV)
-    x = torch.randn(2, 8, 8, 8, requires_grad=True)
-
-    trunk(x).square().sum().backward()
-
-    assert x.grad is not None and torch.all(torch.isfinite(x.grad))
-
-    for p in trunk.parameters():
-        assert p.grad is not None and torch.all(torch.isfinite(p.grad))
-
-
 @pytest.mark.parametrize("checkpointing", [False, True])
-def test_residualtrunk_compiles_in_a_single_graph(checkpointing: bool) -> None:
-    r"""Determines if torch.compile traces a trunk without breaking its graph, checkpointed or not."""
-    trunk = ResidualTrunk(8, num_blocks=2, spatial=2, checkpointing=checkpointing, **CONV)
+def test_residualblocks_compile_in_a_single_graph(checkpointing: bool) -> None:
+    r"""Determines if torch.compile traces a stack of blocks without breaking its graph, checkpointed or not."""
+    blocks = ModulatedSequential(*[
+        ResidualBlock(8, spatial=2, checkpointing=checkpointing, **CONV) for _ in range(2)
+    ])
     x = torch.randn(2, 8, 8, 8)
 
     # The input does not require gradients, as the data of a training step
     torch._dynamo.reset()
-    explanation = torch._dynamo.explain(trunk)(x)
+    explanation = torch._dynamo.explain(blocks)(x)
 
     assert explanation.graph_break_count == 0
     assert explanation.graph_count == 1

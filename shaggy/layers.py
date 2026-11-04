@@ -5,7 +5,6 @@ __all__ = [
     "FRMSNorm",
     "ModulatedSequential",
     "ResidualBlock",
-    "ResidualTrunk",
 ]
 
 import torch.nn as nn
@@ -262,58 +261,3 @@ class ResidualBlock(nn.Module):
             return checkpoint(self._forward, x, mod, use_reentrant=False)
         else:
             return self._forward(x, mod)
-
-
-class ResidualTrunk(nn.Module):
-    r"""Creates the residual trunk of a single depth.
-
-    Arguments:
-        channels      : Number of channels C.
-        num_blocks    : Number of residual blocks.
-        spatial       : Number of spatial dimensions N.
-        ffn_factor    : Channel expansion factor in the feed-forward networks.
-        mod_features  : Number of modulating features D, or None to disable the modulation.
-        dropout       : Dropout rate in [0, 1].
-        checkpointing : Whether to use gradient checkpointing or not.
-        kwargs        : Keyword arguments passed to convolutional layers.
-    """
-
-    modulated = True
-
-    def __init__(
-        self,
-        channels: int,
-        num_blocks: int,
-        spatial: int = 2,
-        ffn_factor: int = 1,
-        mod_features: Optional[int] = None,
-        dropout: Optional[float] = None,
-        checkpointing: bool = False,
-        **kwargs,
-    ) -> None:
-        super().__init__()
-
-        self.blocks = ModulatedSequential(*[
-            ResidualBlock(
-                channels,
-                ffn_factor=ffn_factor,
-                mod_features=mod_features,
-                spatial=spatial,
-                dropout=dropout,
-                checkpointing=checkpointing,
-                **kwargs,
-            )
-            for _ in range(num_blocks)
-        ])
-
-    def forward(self, x: Tensor, mod: Optional[Tensor] = None) -> Tensor:
-        r"""Applies the residual blocks in order.
-
-        Arguments:
-            x   : Input tensor (B, C, L_1, ..., L_N).
-            mod : Modulation vector (B, D).
-
-        Returns:
-            y : Output tensor (B, C, L_1, ..., L_N).
-        """
-        return self.blocks(x, mod)

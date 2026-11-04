@@ -15,7 +15,7 @@ from collections.abc import Sequence
 from torch import Tensor
 from typing import Any, Optional, Union
 
-from shaggy.layers import BoundaryConv, FRMSNorm, ModulatedSequential, ResidualTrunk
+from shaggy.layers import BoundaryConv, FRMSNorm, ModulatedSequential, ResidualBlock
 from shaggy.models.ae import AutoEncoder
 
 
@@ -188,16 +188,18 @@ class ConvEncoder(nn.Module):
                     )
 
             self.descent.append(
-                ResidualTrunk(
-                    hid_channels[i],
-                    num_blocks=num_blocks,
-                    spatial=spatial,
-                    ffn_factor=ffn_factor,
-                    mod_features=mod_features,
-                    dropout=dropout,
-                    checkpointing=checkpointing,
-                    **kwargs,
-                )
+                ModulatedSequential(*[
+                    ResidualBlock(
+                        hid_channels[i],
+                        ffn_factor=ffn_factor,
+                        mod_features=mod_features,
+                        spatial=spatial,
+                        dropout=dropout,
+                        checkpointing=checkpointing,
+                        **kwargs,
+                    )
+                    for _ in range(num_blocks)
+                ])
             )
 
         self.out_norm = FRMSNorm(hid_channels[-1], mod_features=mod_features, spatial=spatial)
@@ -298,16 +300,18 @@ class ConvDecoder(nn.Module):
 
         for i in reversed(range(len(hid_channels))):
             self.ascent.append(
-                ResidualTrunk(
-                    hid_channels[i],
-                    num_blocks=hid_blocks[i],
-                    spatial=spatial,
-                    ffn_factor=ffn_factor,
-                    mod_features=mod_features,
-                    dropout=dropout,
-                    checkpointing=checkpointing,
-                    **kwargs,
-                )
+                ModulatedSequential(*[
+                    ResidualBlock(
+                        hid_channels[i],
+                        ffn_factor=ffn_factor,
+                        mod_features=mod_features,
+                        spatial=spatial,
+                        dropout=dropout,
+                        checkpointing=checkpointing,
+                        **kwargs,
+                    )
+                    for _ in range(hid_blocks[i])
+                ])
             )
 
             if i > 0:
