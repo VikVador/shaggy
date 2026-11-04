@@ -68,8 +68,12 @@ def test_cae(
 
     z_copy, x_reconstructed_copy = autoencoder_copy(x)
 
-    assert torch.allclose(z, z_copy)
-    assert torch.allclose(x_reconstructed, x_reconstructed_copy)
+    for p, p_copy in zip(autoencoder.parameters(), autoencoder_copy.parameters()):
+        assert torch.equal(p, p_copy)
+
+    # Two instances may run different convolution kernels, equal up to float32 rounding
+    assert torch.allclose(z, z_copy, atol=1e-5)
+    assert torch.allclose(x_reconstructed, x_reconstructed_copy, atol=1e-5)
 
 
 def test_cae_compression() -> None:
