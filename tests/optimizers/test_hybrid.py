@@ -11,7 +11,7 @@ def make_mlp() -> torch.nn.Module:
 
 
 def test_hybrid_routes_2d_parameters_to_muon() -> None:
-    r"""Weight matrices (ndim == 2) are optimized by the Muon sub-optimizer."""
+    r"""Determines if the weight matrices (ndim == 2) are optimized by Muon."""
     mlp = make_mlp()
     optimizer = HybridMA(mlp)
 
@@ -23,7 +23,7 @@ def test_hybrid_routes_2d_parameters_to_muon() -> None:
 
 
 def test_hybrid_exclude_names_forces_adamw() -> None:
-    r"""Names listed in exclude_names are routed to AdamW even if 2D."""
+    r"""Determines if the names listed in exclude_names are routed to AdamW, even if 2D."""
     mlp = make_mlp()
     optimizer = HybridMA(mlp, exclude_names=["0.weight"])
 
@@ -36,7 +36,7 @@ def test_hybrid_exclude_names_forces_adamw() -> None:
 
 
 def test_hybrid_step_reduces_loss() -> None:
-    r"""A few HybridMA steps reduce the loss of a small MLP regression."""
+    r"""Determines if a few HybridMA steps reduce the loss of a small MLP regression."""
     torch.manual_seed(0)
     mlp = make_mlp()
     x = torch.randn(16, 4)
@@ -56,7 +56,7 @@ def test_hybrid_step_reduces_loss() -> None:
 
 
 def test_hybrid_zero_grad_clears_both_suboptimizers() -> None:
-    r"""zero_grad clears gradients routed to both Muon and AdamW."""
+    r"""Determines if zero_grad clears the gradients routed to both Muon and AdamW."""
     mlp = make_mlp()
     optimizer = HybridMA(mlp)
 
@@ -70,7 +70,7 @@ def test_hybrid_zero_grad_clears_both_suboptimizers() -> None:
 
 
 def test_hybrid_handles_all_2d_parameters() -> None:
-    r"""HybridMA works when every parameter is routed to Muon (empty AdamW group)."""
+    r"""Determines if HybridMA works when every parameter is routed to Muon."""
     torch.manual_seed(0)
     mlp = torch.nn.Sequential(
         torch.nn.Linear(4, 8, bias=False),
@@ -94,7 +94,7 @@ def test_hybrid_handles_all_2d_parameters() -> None:
 
 
 def test_hybrid_state_dict_roundtrip() -> None:
-    r"""load_state_dict restores the state of both sub-optimizers."""
+    r"""Determines if load_state_dict restores the state of both sub-optimizers."""
     mlp = make_mlp()
     optimizer = HybridMA(mlp)
 

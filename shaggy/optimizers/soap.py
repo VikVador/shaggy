@@ -7,11 +7,7 @@ __all__ = [
 import torch
 
 from collections.abc import Iterable
-from typing import (
-    Any,
-    Callable,
-    Optional,
-)
+from typing import Any, Callable, Optional
 
 
 class SOAP(torch.optim.Optimizer):
@@ -74,6 +70,7 @@ class SOAP(torch.optim.Optimizer):
         Returns:
             new_shape : The merged shape, with the first dimension preserved.
         """
+
         new_shape = []
         cum_size = 1
 
@@ -368,4 +365,5 @@ def adam(
     Returns:
         update : The Adam parameter update, computed in-place on var.
     """
+
     return torch.rsqrt_(var + eps**2).mul_(mean)

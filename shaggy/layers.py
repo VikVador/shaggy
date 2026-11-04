@@ -61,24 +61,15 @@ class BoundaryConv(nn.Module):
             f"got both for the axes {sorted(periodic & reflect)}."
         )
 
-        conv = ConvNd(
+        # The convolution pads the axes with zeros itself, the other axes are padded beforehand
+        self.conv = ConvNd(
             in_channels,
             out_channels,
             spatial=spatial,
             kernel_size=kernel_size,
             stride=stride,
+            padding=[0 if a in periodic | reflect else k // 2 for a, k in enumerate(kernel_size)],
             identity_init=identity_init,
-        )
-
-        # The parameters keep the names of a plain convolution, so saved weights still load
-        self.weight, self.bias = conv.weight, conv.bias
-        self.in_channels, self.out_channels = in_channels, out_channels
-        self.stride = conv.stride
-        self.convolution = getattr(F, f"conv{spatial}d")
-
-        # The convolution pads the axes with zeros itself, the other axes are padded beforehand
-        self.padding = tuple(
-            0 if axis in periodic | reflect else k // 2 for axis, k in enumerate(kernel_size)
         )
 
         # F.pad lists the paddings from the last axis backwards, and needs one pair for every axis
@@ -104,9 +95,7 @@ class BoundaryConv(nn.Module):
         for padding, mode in self.boundaries:
             x = F.pad(x, padding, mode=mode)
 
-        return self.convolution(
-            x, self.weight, self.bias, stride=self.stride, padding=self.padding
-        )
+        return self.conv(x)
 
 
 class FRMSNorm(RMSNorm):
@@ -237,11 +226,19 @@ class ResidualBlock(nn.Module):
         )
 
         # Identity initialization
-        self.ffn[-1].weight.data.mul_(1e-2)
-        self.ffn[-1].bias.data.zero_()
+        self.ffn[-1].conv.weight.data.mul_(1e-2)
+        self.ffn[-1].conv.bias.data.zero_()
 
     def _forward(self, x: Tensor, mod: Optional[Tensor] = None) -> Tensor:
-        r"""Checkpointable forward pass."""
+        r"""Adds the output of the feed-forward network to the input, without checkpointing.
+
+        Arguments:
+            x   : Input tensor (B, C, L_1, ..., L_N).
+            mod : Modulation vector (B, D).
+
+        Returns:
+            y : Output tensor (B, C, L_1, ..., L_N).
+        """
 
         return x + self.ffn(self.norm(x, mod))
 

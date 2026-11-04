@@ -38,7 +38,14 @@ def warmup_cosine_decay(
     assert warmup_valid, f"ERROR - warmup_steps must be in [0, {total_steps}], got {warmup_steps}."
 
     def _lr_lambda(step: int) -> float:
-        r"""Compute the learning rate multiplier for a given optimizer step."""
+        r"""Compute the learning rate multiplier for a given optimizer step.
+
+        Arguments:
+            step : Optimizer step.
+
+        Returns:
+            factor : Learning rate divided by lr_peak.
+        """
 
         # Linear warmup: interpolate from lr_start to lr_peak
         if step < warmup_steps:
