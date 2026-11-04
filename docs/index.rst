@@ -3,7 +3,7 @@
 Shaggy
 ======
 
-Shaggy is a lightweight package that implements autoencoder models in `PyTorch <https://pytorch.org>`_. It provides modular encoder-decoder architectures, the `SOAP <https://arxiv.org/abs/2409.11321>`_ and `Muon <https://kellerjordan.github.io/posts/muon/>`_ optimizers, gradient-checkpointing utilities, and more. Basically everything needed to go from raw data to a trained latent representation with minimal boilerplate.
+Shaggy is a lightweight package of tools to train deep learning models in `PyTorch <https://pytorch.org>`_, at scale, on many GPUs. It provides distributed training utilities, losses, the `SOAP <https://arxiv.org/abs/2409.11321>`_ and `Muon <https://kellerjordan.github.io/posts/muon/>`_ optimizers, learning rate schedulers, gradient checkpointing, tools to stop and resume a training, and models that work either in the ambient space of the data or in a latent space. Autoencoders map one space to the other; transformers, coming next, will run in either, on the data itself or on the latent states of an autoencoder. Basically everything needed to go from raw data to a trained model, at scale, with minimal boilerplate.
 
 Installation
 ------------
@@ -38,10 +38,14 @@ Getting started
 
 Shaggy is organized in a few sub-packages.
 
-* :mod:`shaggy.layers` holds the building blocks of the models: a modulated RMS normalization and (convolutional) residual blocks, groups and trunks.
-* :mod:`shaggy.models` holds the autoencoders: a base :class:`~shaggy.models.AutoEncoder` class, convolutional encoders and decoders assembled into a :class:`~shaggy.models.ConvAE`, and a :class:`~shaggy.models.FusionAE` combining several trained encoder-decoder pairs.
+* :mod:`shaggy.layers` holds the building blocks of the models: a modulated RMS normalization and (convolutional) residual blocks, groups and trunks, with optional gradient checkpointing.
+* :mod:`shaggy.models` holds the models. Today, the autoencoders: a base :class:`~shaggy.models.AutoEncoder` class, convolutional encoders and decoders assembled into a :class:`~shaggy.models.ConvAE`, and a :class:`~shaggy.models.FusionAE` combining several trained encoder-decoder pairs.
 * :mod:`shaggy.loss` holds the training losses: reconstruction, Gromov-Monge embedding (GME) and continuous ranked probability score (CRPS).
 * :mod:`shaggy.optimizers` holds the SOAP, Muon and HybridMA optimizers, as well as a safe gradient step.
+* :mod:`shaggy.schedulers` holds the learning rate schedulers: a linear warmup followed by a cosine decay.
+* :mod:`shaggy.distributed` sets up a training on several processes launched with ``torchrun``, and averages values across them.
+* :mod:`shaggy.dataloader` cycles over a dataloader for a given number of batches, and picks fixed samples of a dataset.
+* :mod:`shaggy.training` saves and loads the state of a training, and tells when its loss stopped improving.
 * :mod:`shaggy.tools` saves and loads models with their configuration.
 
 For more information, check out the :doc:`tutorials <../tutorials>` or the :doc:`API <../api>`.

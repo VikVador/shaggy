@@ -1,7 +1,7 @@
 [project]
 name = "shaggy"
 dynamic = ["version"]
-description = "Autoencoders in PyTorch"
+description = "Distributed training in PyTorch"
 readme = "README.md"
 license = {text = "MIT"}
 
