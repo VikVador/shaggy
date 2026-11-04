@@ -12,9 +12,9 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from azula.nn.layers import ConvNd, RMSNorm
-from azula.nn.utils import checkpoint
 from collections.abc import Sequence
 from torch import Tensor
+from torch.utils.checkpoint import checkpoint
 from typing import Optional, Union
 
 
@@ -257,8 +257,9 @@ class ResidualBlock(nn.Module):
             y : Output tensor (B, C, L_1, ..., L_N).
         """
 
-        if self.checkpointing:
-            return checkpoint(self._forward, reentrant=not self.training)(x, mod)
+        # PyTorch's checkpoint is traced by torch.compile, azula's breaks the graph at every block
+        if self.checkpointing and self.training:
+            return checkpoint(self._forward, x, mod, use_reentrant=False)
         else:
             return self._forward(x, mod)
 

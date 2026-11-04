@@ -302,3 +302,17 @@ def test_residualtrunk_gradients() -> None:
 
     for p in trunk.parameters():
         assert p.grad is not None and torch.all(torch.isfinite(p.grad))
+
+
+@pytest.mark.parametrize("checkpointing", [False, True])
+def test_residualtrunk_compiles_in_a_single_graph(checkpointing: bool) -> None:
+    r"""Determines if torch.compile traces a trunk without breaking its graph, checkpointed or not."""
+    trunk = ResidualTrunk(8, num_blocks=2, spatial=2, checkpointing=checkpointing, **CONV)
+    x = torch.randn(2, 8, 8, 8)
+
+    # The input does not require gradients, as the data of a training step
+    torch._dynamo.reset()
+    explanation = torch._dynamo.explain(trunk)(x)
+
+    assert explanation.graph_break_count == 0
+    assert explanation.graph_count == 1
