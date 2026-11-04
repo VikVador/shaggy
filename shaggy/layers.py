@@ -26,8 +26,8 @@ class BoundaryConv(nn.Module):
         spatial       : Number of spatial dimensions N.
         kernel_size   : Kernel size, odd, for every axis or one per axis.
         stride        : Stride, for every axis or one per axis.
-        periodic      : Spatial axes padded periodically, e.g. (-1,) for the longitude of (Y, X).
-        reflect       : Spatial axes padded by reflection, e.g. (0,) for the latitude of (Y, X).
+        periodic      : Spatial axes padded periodically, counted from 0 or from the end (-1).
+        reflect       : Spatial axes padded by reflection, counted from 0 or from the end (-1).
         identity_init : Whether to initialize the convolution as identity or not.
     """
 
