@@ -20,13 +20,22 @@ from shaggy.models.ae import AutoEncoder
 
 
 def broadcast_to_axes(value: Union[int, Sequence[int]], spatial: int) -> tuple[int, ...]:
-    r"""Broadcasts an integer, or a sequence of integers, to one value per spatial axis."""
+    r"""Broadcasts an integer, or a sequence of integers, to one value per spatial axis.
+
+    Arguments:
+        value   : An int shared by every axis, or one int per axis.
+        spatial : Number of spatial dimensions N.
+
+    Returns:
+        values : One value per axis.
+    """
+
     if isinstance(value, int):
         return (value,) * spatial
 
     # Security
     assert len(value) == spatial, (
-        f"ERROR (broadcast_to_axes) | Expected {spatial} values, one per axis, got {len(value)}."
+        f"ERROR - Expected {spatial} values, one per axis, got {len(value)}."
     )
 
     return tuple(value)
@@ -40,20 +49,19 @@ def broadcast_to_levels(
     r"""Broadcasts a stride to one value per level and per axis.
 
     Arguments:
-        value: An int or one int per axis, shared by every level, or one such stride per level.
-        levels: Number of resampling levels.
-        spatial: Number of spatial dimensions N.
+        value   : An int or one int per axis, shared by every level, or one such stride per level.
+        levels  : Number of resampling levels.
+        spatial : Number of spatial dimensions N.
 
     Returns:
-        strides: One stride per level, each with one value per axis.
+        strides : One stride per level, each with one value per axis.
     """
     if isinstance(value, int) or all(isinstance(v, int) for v in value):
         return [broadcast_to_axes(value, spatial)] * levels
 
     # Security
     assert len(value) == levels, (
-        f"ERROR (broadcast_to_levels) | Expected {levels} strides, one per level, "
-        f"got {len(value)}."
+        f"ERROR - Expected {levels} strides, one per level, got {len(value)}."
     )
 
     return [broadcast_to_axes(v, spatial) for v in value]
@@ -63,23 +71,23 @@ class ConvEncoder(nn.Module):
     r"""Creates a convolutional encoder module.
 
     Arguments:
-        in_channels: Number of input channels C_i.
-        out_channels: Number of output channels C_o.
-        mix_channels: Number of channels of a pointwise convolution mixing the inputs first, or None.
-        hid_channels: Number of channels at each depth.
-        hid_blocks: Number of residual blocks at each depth.
-        kernel_size: Kernel size of all convolutions.
-        stride: Stride of the downsampling convolutions, for every level or one per level.
-        pixel_shuffle: Whether to downsample with pixel shuffling or not.
-        ffn_factor: Channel expansion factor in the feed-forward networks.
-        mod_features: Number of modulating features D, or None to disable the modulation.
-        spatial: Number of spatial dimensions N.
-        patch_size: Patch size applied before the first convolution.
-        periodic: Spatial axes padded periodically, e.g. (-1,) for the longitude of (Y, X).
-        reflect: Spatial axes padded by reflection, e.g. (0,) for the latitude of (Y, X).
-        dropout: Dropout rate in [0, 1].
-        checkpointing: Whether to use gradient checkpointing or not.
-        identity_init: Whether to initialize projection and resampling layers as identity or not.
+        in_channels   : Number of input channels C_i.
+        out_channels  : Number of output channels C_o.
+        mix_channels  : Number of channels of a pointwise convolution mixing the inputs first, or None.
+        hid_channels  : Number of channels at each depth.
+        hid_blocks    : Number of residual blocks at each depth.
+        kernel_size   : Kernel size of all convolutions.
+        stride        : Stride of the downsampling convolutions, for every level or one per level.
+        pixel_shuffle : Whether to downsample with pixel shuffling or not.
+        ffn_factor    : Channel expansion factor in the feed-forward networks.
+        mod_features  : Number of modulating features D, or None to disable the modulation.
+        spatial       : Number of spatial dimensions N.
+        patch_size    : Patch size applied before the first convolution.
+        periodic      : Spatial axes padded periodically, e.g. (-1,) for the longitude of (Y, X).
+        reflect       : Spatial axes padded by reflection, e.g. (0,) for the latitude of (Y, X).
+        dropout       : Dropout rate in [0, 1].
+        checkpointing : Whether to use gradient checkpointing or not.
+        identity_init : Whether to initialize projection and resampling layers as identity or not.
     """
 
     def __init__(
@@ -110,11 +118,11 @@ class ConvEncoder(nn.Module):
 
         # Security
         assert len(hid_channels) == len(hid_blocks), (
-            "ERROR (ConvEncoder) | hid_channels and hid_blocks must match in length."
+            "ERROR - hid_channels and hid_blocks must match in length."
         )
 
         assert all(k % 2 == 1 for k in kernel_size), (
-            "ERROR (ConvEncoder) | Kernel sizes must be odd to preserve the spatial dimensions."
+            "ERROR - Kernel sizes must be odd to preserve the spatial dimensions."
         )
 
         kwargs = dict(kernel_size=kernel_size, periodic=periodic, reflect=reflect)
@@ -203,13 +211,14 @@ class ConvEncoder(nn.Module):
         )
 
     def forward(self, x: Tensor, mod: Optional[Tensor] = None) -> Tensor:
-        r"""
+        r"""Encodes the input into a latent code.
+
         Arguments:
-            x: Input tensor (B, C_i, L_1, ..., L_N).
-            mod: Modulation vector (B, D).
+            x   : Input tensor (B, C_i, L_1, ..., L_N).
+            mod : Modulation vector (B, D).
 
         Returns:
-            Output tensor (B, C_o, L_1 / scale_1, ..., L_N / scale_N).
+            y : Output tensor (B, C_o, L_1 / scale_1, ..., L_N / scale_N).
         """
         x = self.descent(self.in_proj(self.patch(self.mix(x))), mod)
         x = self.out_proj(self.out_norm(x, mod))
@@ -221,22 +230,22 @@ class ConvDecoder(nn.Module):
     r"""Creates a convolutional decoder module.
 
     Arguments:
-        in_channels: Number of input channels C_i.
-        out_channels: Number of output channels C_o.
-        hid_channels: Number of channels at each depth.
-        hid_blocks: Number of residual blocks at each depth.
-        kernel_size: Kernel size of all convolutions.
-        stride: Stride of the upsampling convolutions, for every level or one per level.
-        pixel_shuffle: Whether to upsample with pixel shuffling or not.
-        ffn_factor: Channel expansion factor in the feed-forward networks.
-        mod_features: Number of modulating features D, or None to disable the modulation.
-        spatial: Number of spatial dimensions N.
-        patch_size: Patch size applied after the last convolution.
-        periodic: Spatial axes padded periodically, e.g. (-1,) for the longitude of (Y, X).
-        reflect: Spatial axes padded by reflection, e.g. (0,) for the latitude of (Y, X).
-        dropout: Dropout rate in [0, 1].
-        checkpointing: Whether to use gradient checkpointing or not.
-        identity_init: Whether to initialize projection and resampling layers as identity or not.
+        in_channels   : Number of input channels C_i.
+        out_channels  : Number of output channels C_o.
+        hid_channels  : Number of channels at each depth.
+        hid_blocks    : Number of residual blocks at each depth.
+        kernel_size   : Kernel size of all convolutions.
+        stride        : Stride of the upsampling convolutions, for every level or one per level.
+        pixel_shuffle : Whether to upsample with pixel shuffling or not.
+        ffn_factor    : Channel expansion factor in the feed-forward networks.
+        mod_features  : Number of modulating features D, or None to disable the modulation.
+        spatial       : Number of spatial dimensions N.
+        patch_size    : Patch size applied after the last convolution.
+        periodic      : Spatial axes padded periodically, e.g. (-1,) for the longitude of (Y, X).
+        reflect       : Spatial axes padded by reflection, e.g. (0,) for the latitude of (Y, X).
+        dropout       : Dropout rate in [0, 1].
+        checkpointing : Whether to use gradient checkpointing or not.
+        identity_init : Whether to initialize projection and resampling layers as identity or not.
     """
 
     def __init__(
@@ -266,11 +275,11 @@ class ConvDecoder(nn.Module):
 
         # Security
         assert len(hid_channels) == len(hid_blocks), (
-            "ERROR (ConvDecoder) | hid_channels and hid_blocks must match in length."
+            "ERROR - hid_channels and hid_blocks must match in length."
         )
 
         assert all(k % 2 == 1 for k in kernel_size), (
-            "ERROR (ConvDecoder) | Kernel sizes must be odd to preserve the spatial dimensions."
+            "ERROR - Kernel sizes must be odd to preserve the spatial dimensions."
         )
 
         kwargs = dict(kernel_size=kernel_size, periodic=periodic, reflect=reflect)
@@ -346,13 +355,14 @@ class ConvDecoder(nn.Module):
         self.unpatch = Unpatchify(patch_shape=patch_size)
 
     def forward(self, x: Tensor, mod: Optional[Tensor] = None) -> Tensor:
-        r"""
+        r"""Decodes a latent code into the ambient space.
+
         Arguments:
-            x: Input tensor (B, C_i, L_1, ..., L_N).
-            mod: Modulation vector (B, D).
+            x   : Input tensor (B, C_i, L_1, ..., L_N).
+            mod : Modulation vector (B, D).
 
         Returns:
-            Output tensor (B, C_o, L_1 * scale_1, ..., L_N * scale_N).
+            y : Output tensor (B, C_o, L_1 * scale_1, ..., L_N * scale_N).
         """
 
         x = self.ascent(self.in_proj(x), mod)
@@ -365,18 +375,18 @@ class ConvAE(AutoEncoder):
     r"""Creates a Convolutional Autoencoder (CAE).
 
     Arguments:
-        encoder: Encoder module.
-        decoder: Decoder module.
+        encoder : Encoder module.
+        decoder : Decoder module.
     """
 
     def latent(self, resolution: Sequence[int]) -> tuple[int, ...]:
         r"""Computes the latent shape.
 
         Arguments:
-            resolution: Spatial dimensions of the data (L_1, ..., L_N).
+            resolution : Spatial dimensions of the data (L_1, ..., L_N).
 
         Returns:
-            shape: Latent code shape (C_z, L_1', ..., L_N').
+            shape : Latent code shape (C_z, L_1', ..., L_N').
         """
 
         # The encoder divides each spatial dimension by its own scale
@@ -389,11 +399,11 @@ class ConvAE(AutoEncoder):
         r"""Computes the compression factor of the autoencoder for a given data shape.
 
         Arguments:
-            input_shape: Shape of the data (C, L_1, ..., L_N).
+            input_shape : Shape of the data (C, L_1, ..., L_N).
 
         Returns:
-            latent: Latent code shape (C_z, L_1', ..., L_N').
-            factor: Compression factor.
+            latent : Latent code shape (C_z, L_1', ..., L_N').
+            factor : Compression factor.
         """
 
         _, *resolution = input_shape
@@ -415,16 +425,16 @@ def create_ConvAE(
     r"""Instantiates a Convolutional Autoencoder (CAE).
 
     Arguments:
-        in_channels: Number of input channels C_i.
-        out_channels: Number of output channels C_o.
-        lat_channels: Number of latent channels C_z.
-        spatial: Number of spatial dimensions N.
-        config_encoder: Keyword arguments overriding kwargs for the encoder.
-        config_decoder: Keyword arguments overriding kwargs for the decoder.
-        kwargs: Keyword arguments shared by ConvEncoder and ConvDecoder.
+        in_channels    : Number of input channels C_i.
+        out_channels   : Number of output channels C_o.
+        lat_channels   : Number of latent channels C_z.
+        spatial        : Number of spatial dimensions N.
+        config_encoder : Keyword arguments overriding kwargs for the encoder.
+        config_decoder : Keyword arguments overriding kwargs for the decoder.
+        kwargs         : Keyword arguments shared by ConvEncoder and ConvDecoder.
 
     Returns:
-        autoencoder: A ConvAE instance.
+        autoencoder : A ConvAE instance.
     """
 
     encoder = ConvEncoder(
@@ -443,8 +453,7 @@ def create_ConvAE(
 
     # Security
     assert encoder.scale == decoder.scale, (
-        f"ERROR (create_ConvAE) | Encoder downsamples by {encoder.scale} "
-        f"but decoder upsamples by {decoder.scale}."
+        f"ERROR - Encoder downsamples by {encoder.scale} but decoder upsamples by {decoder.scale}."
     )
 
     return ConvAE(encoder, decoder)

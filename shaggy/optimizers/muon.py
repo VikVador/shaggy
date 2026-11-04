@@ -16,15 +16,13 @@ class Muon(torch.optim.Muon):
         | Muon: An optimizer for hidden layers in neural networks (Jordan, 2024)
         | https://kellerjordan.github.io/posts/muon/
 
-    Note:
-        Only supports 2D parameters.
-
     Arguments:
-        params: Network parameters.
-        lr: Learning rate.
-        weight_decay: Weight decay coefficient [0, 1].
+        params       : Network parameters.
+        lr           : Learning rate.
+        weight_decay : Weight decay coefficient [0, 1].
     """
 
+    # Only supports 2D parameters, HybridMA routes the others to AdamW
     def __init__(
         self,
         params: Iterable[torch.nn.Parameter],

@@ -21,18 +21,16 @@ def loss_reconstruction(
     r"""Computes the (optionally weighted) mean squared error between input and target.
 
     Arguments:
-        input: Input tensor (B, C, L_1, ..., L_N).
-        target: Target tensor (B, C, L_1, ..., L_N).
-        weights: Broadcastable Weight tensor.
+        input   : Input tensor (B, C, L_1, ..., L_N).
+        target  : Target tensor (B, C, L_1, ..., L_N).
+        weights : Broadcastable Weight tensor.
 
     Returns:
-        loss: Scalar mean squared error.
+        loss : Scalar mean squared error.
     """
 
     # Security
-    assert input.shape == target.shape, (
-        "ERROR (loss_reconstruction) | Input and target must have the same shape."
-    )
+    assert input.shape == target.shape, "ERROR - Input and target must have the same shape."
 
     loss = (input - target).square()
     loss = loss * weights if weights is not None else loss
@@ -48,18 +46,16 @@ def loss_geometry_embedding(x: Tensor, z: Tensor) -> Tensor:
         | https://arxiv.org/abs/2501.09876
 
     Arguments:
-        x: Ambient data (B, C, L_1, ..., L_N).
-        z: Latent codes (B, C*, L_1*, ..., L_N*).
+        x : Ambient data (B, C, L_1, ..., L_N).
+        z : Latent codes (B, C*, L_1*, ..., L_N*).
 
     Returns:
-        loss: Scalar GME cost.
+        loss : Scalar GME cost.
     """
 
     # Security
     batch = len(x)
-    assert batch > 1, (
-        f"ERROR (loss_geometry_embedding) | Expected at least 2 samples to pair, got {batch}."
-    )
+    assert batch > 1, f"ERROR - Expected at least 2 samples to pair, got {batch}."
 
     # Distances are computed between flattened samples
     if z.dim() > 2:
@@ -90,17 +86,17 @@ def loss_continuous_ranked_probability_score(
         | https://doi.org/10.1002/qj.2270
 
     Arguments:
-        input: Ensemble tensor (B, E, C, L_1, ..., L_N).
-        target: Target tensor (B, C, L_1, ..., L_N).
-        weights: Broadcastable Weight tensor.
+        input   : Ensemble tensor (B, E, C, L_1, ..., L_N).
+        target  : Target tensor (B, C, L_1, ..., L_N).
+        weights : Broadcastable Weight tensor.
 
     Returns:
-        loss: Scalar fair CRPS.
+        loss : Scalar fair CRPS.
     """
 
     # Security
     assert input.shape[:1] + input.shape[2:] == target.shape, (
-        "ERROR (loss_continuous_ranked_probability_score) | Input must be (B, E, *target.shape[1:])"
+        "ERROR - Input must be (B, E, *target.shape[1:])"
     )
 
     dims = " ".join(["B", "E", "C", *(f"L_{i}" for i in range(1, input.dim() - 2))])

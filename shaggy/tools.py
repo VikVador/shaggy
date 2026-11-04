@@ -23,9 +23,9 @@ def save(
     r"""Saves the weights and configuration of a model to a directory.
 
     Arguments:
-        model: Model to save.
-        config: Configuration of model.
-        path: Target directory in which to save the model.
+        model  : Model to save.
+        config : Configuration of model.
+        path   : Target directory in which to save the model.
     """
 
     path = Path(path)
@@ -38,10 +38,10 @@ def load_config(path: Union[str, Path]) -> DictConfig:
     r"""Loads the configuration of a saved model.
 
     Arguments:
-        path: Directory containing the saved model configuration.
+        path : Directory containing the saved model configuration.
 
     Returns:
-        config: Configuration of model.
+        config : Configuration of model.
     """
     return OmegaConf.load(Path(path) / "config.yml")
 
@@ -54,12 +54,12 @@ def load_weights(
     r"""Loads saved weights into a model.
 
     Arguments:
-        model: Model to load weights into.
-        path: Directory containing the saved model weights.
-        device: Device to load the model onto (e.g. "cpu", "cuda").
+        model  : Model to load weights into.
+        path   : Directory containing the saved model weights.
+        device : Device to load the model onto (e.g. "cpu", "cuda").
 
     Returns:
-        model: Same model, with the saved weights, on device and in eval mode.
+        model : Same model, with the saved weights, on device and in eval mode.
     """
 
     device = "cpu" if device == "cuda" and not torch.cuda.is_available() else device
@@ -78,11 +78,11 @@ def load(
     r"""Loads a model of a given class from a saved checkpoint.
 
     Arguments:
-        path: Directory containing the saved model checkpoint.
-        model_cls: Class to instantiate from the saved configuration.
-        device: Device to load the model onto (e.g. "cpu", "cuda").
+        path      : Directory containing the saved model checkpoint.
+        model_cls : Class to instantiate from the saved configuration.
+        device    : Device to load the model onto (e.g. "cpu", "cuda").
 
     Returns:
-        model: The reconstructed model, with the saved weights, on device and in eval mode.
+        model : The reconstructed model, with the saved weights, on device and in eval mode.
     """
     return load_weights(model_cls(**load_config(path)), path, device=device)
