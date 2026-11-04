@@ -84,8 +84,8 @@ class ConvEncoder(nn.Module):
         mod_features  : Number of modulating features D, or None to disable the modulation.
         spatial       : Number of spatial dimensions N.
         patch_size    : Patch size applied before the first convolution.
-        periodic      : Spatial axes padded periodically, e.g. (-1,) for the longitude of (Y, X).
-        reflect       : Spatial axes padded by reflection, e.g. (0,) for the latitude of (Y, X).
+        periodic      : Spatial axes padded periodically, counted from 0 or from the end (-1).
+        reflect       : Spatial axes padded by reflection, counted from 0 or from the end (-1).
         dropout       : Dropout rate in [0, 1].
         checkpointing : Whether to use gradient checkpointing or not.
         identity_init : Whether to initialize projection and resampling layers as identity or not.
@@ -130,8 +130,8 @@ class ConvEncoder(nn.Module):
 
         self.scale = tuple(p * math.prod(s[a] for s in strides) for a, p in enumerate(patch_size))
 
-        # The pointwise convolution mixes the input channels at full resolution, e.g. fields with
-        # their coordinates, such that fewer channels reach the first convolution
+        # The pointwise convolution mixes the input channels at full resolution, such that fewer
+        # channels reach the first convolution
         if mix_channels is None:
             self.mix = nn.Identity()
         else:
@@ -244,8 +244,8 @@ class ConvDecoder(nn.Module):
         mod_features  : Number of modulating features D, or None to disable the modulation.
         spatial       : Number of spatial dimensions N.
         patch_size    : Patch size applied after the last convolution.
-        periodic      : Spatial axes padded periodically, e.g. (-1,) for the longitude of (Y, X).
-        reflect       : Spatial axes padded by reflection, e.g. (0,) for the latitude of (Y, X).
+        periodic      : Spatial axes padded periodically, counted from 0 or from the end (-1).
+        reflect       : Spatial axes padded by reflection, counted from 0 or from the end (-1).
         dropout       : Dropout rate in [0, 1].
         checkpointing : Whether to use gradient checkpointing or not.
         identity_init : Whether to initialize projection and resampling layers as identity or not.
