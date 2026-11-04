@@ -7,4 +7,4 @@ build:
     python: "3.11"
   commands:
     - mkdir -p $READTHEDOCS_OUTPUT/html
-    - echo '<p>Datasets of the tutorials, see <a href="https://shaggy.readthedocs.io">shaggy.readthedocs.io</a>.</p>' > $READTHEDOCS_OUTPUT/html/index.html
+    - cp docs/index.html $READTHEDOCS_OUTPUT/html/index.html
