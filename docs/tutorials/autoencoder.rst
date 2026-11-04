@@ -1,14 +1,12 @@
 Training an autoencoder
 =======================
 
-This tutorial trains a 3D convolutional autoencoder on the Black Sea state (temperature, salinity, oxygen and chlorophyll, each on 5 depth levels) in two stages: first the encoder alone, with a loss that preserves the geometry of the data, then the decoder alone, with a reconstruction loss.
+This tutorial trains a 3D convolutional autoencoder on 32 days of the Black Sea state (temperature, salinity, oxygen and chlorophyll, each on 5 depth levels) in two stages: first the encoder alone, with a loss that preserves the geometry of the data, then the decoder alone, with a reconstruction loss.
 
 .. code-block:: python
 
     import matplotlib.pyplot as plt
     import torch
-
-    from IPython.display import clear_output
 
     from shaggy.loss import loss_geometry_embedding, loss_reconstruction
     from shaggy.models.cae import create_ConvAE
@@ -26,7 +24,7 @@ All the parameters that influence the tutorial are grouped in the dictionaries b
             "x": "data/x.pt",
             "mask": "data/m.pt",
             "variables": ["temperature", "salinity", "oxygen", "chlorophyll"],
-            "n_val": 32,
+            "n_val": 8,
             "seed": 0,
         },
         "model": {
@@ -48,7 +46,6 @@ All the parameters that influence the tutorial are grouped in the dictionaries b
             "grad_clip": 2.0,
         },
         "plot": {
-            "refresh_every": 100,
             "sample": 0,  # Validation sample to display
             "level": 0,   # Depth level to display (0 = surface)
         },
@@ -100,13 +97,12 @@ The autoencoder is asymmetric: a small encoder and a larger decoder, since compr
 Encoder training
 ----------------
 
-The encoder is trained alone with the Gromov-Monge embedding (GME) loss, which asks the distances between latent codes to match the distances between the samples they encode. The loss is plotted live.
+The encoder is trained alone with the Gromov-Monge embedding (GME) loss, which asks the distances between latent codes to match the distances between the samples they encode. The loss curve is drawn at the end.
 
 .. code-block:: python
 
-    def plot_live(losses: list, title: str) -> None:
-        r"""Redraws a training loss curve in place."""
-        clear_output(wait=True)
+    def plot_loss(losses: list, title: str) -> None:
+        r"""Draws a training loss curve."""
         fig, ax = plt.subplots(figsize=(7, 3))
         ax.plot(range(1, len(losses) + 1), losses)
         ax.set(title=title, xlabel="Step", ylabel="Loss", yscale="log")
@@ -126,8 +122,7 @@ The encoder is trained alone with the Gromov-Monge embedding (GME) loss, which a
         safe_gradient_step(optimizer, grad_clip=config["train"]["grad_clip"])
         losses.append(loss.item())
 
-        if step % config["plot"]["refresh_every"] == 0 or step == steps:
-            plot_live(losses, f"Encoder | GME loss | step {step}/{steps}")
+    plot_loss(losses, "Encoder | GME loss")
 
 Encoding
 --------
@@ -146,7 +141,7 @@ The trained encoder is frozen and the whole dataset is encoded once. The decoder
 Decoder training
 ----------------
 
-The decoder is trained alone to rebuild each sample from its latent code, with a mean squared error where the mask removes the land points. The loss is plotted live.
+The decoder is trained alone to rebuild each sample from its latent code, with a mean squared error where the mask removes the land points.
 
 .. code-block:: python
 
@@ -163,8 +158,7 @@ The decoder is trained alone to rebuild each sample from its latent code, with a
         safe_gradient_step(optimizer, grad_clip=config["train"]["grad_clip"])
         losses.append(loss.item())
 
-        if step % config["plot"]["refresh_every"] == 0 or step == steps:
-            plot_live(losses, f"Decoder | Reconstruction loss | step {step}/{steps}")
+    plot_loss(losses, "Decoder | Reconstruction loss")
 
 Comparison
 ----------
