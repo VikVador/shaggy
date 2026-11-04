@@ -9,7 +9,6 @@
 *.png
 cluster/*
 data/mesh/*
-data/x.pt
 
 ##########
 # Python #
