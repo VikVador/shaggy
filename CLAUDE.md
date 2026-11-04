@@ -1,3 +1,3 @@
 # CLAUDE.md
-Shaggy is a lightweight PyTorch package for training autoencoders, providing modular encoder-decoder architectures, optimizers, gradient-checkpointing utilities and more to go from raw data to a trained latent representation with minimal boilerplate. Before doing any work in this repository, read:
+Shaggy is a lightweight PyTorch package of tools to train models at scale: distributed training utilities, losses, optimizers, schedulers, gradient checkpointing, and models in the ambient space of the data or in a latent space (autoencoders today, transformers next). Before doing any work in this repository, read:
 - `.claude/shaggy-python.md`
