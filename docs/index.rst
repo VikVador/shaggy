@@ -107,7 +107,7 @@ Overview
 
 Shaggy is organized in a few sub-packages.
 
-* :mod:`shaggy.layers` holds the building blocks of the models: a modulated RMS normalization and (convolutional) residual blocks and trunks, with optional gradient checkpointing.
+* :mod:`shaggy.layers` holds the building blocks of the models: a modulated RMS normalization and (convolutional) residual blocks, with optional gradient checkpointing.
 * :mod:`shaggy.models` holds the models. Today, the autoencoders: a base :class:`~shaggy.models.AutoEncoder` class, convolutional encoders and decoders assembled into a :class:`~shaggy.models.ConvAE`, and a :class:`~shaggy.models.FusionAE` combining several trained encoder-decoder pairs.
 * :mod:`shaggy.loss` holds the training losses: reconstruction, Gromov-Monge embedding (GME) and continuous ranked probability score (CRPS).
 * :mod:`shaggy.optimizers` holds the SOAP, Muon and HybridMA optimizers, as well as a safe gradient step.
