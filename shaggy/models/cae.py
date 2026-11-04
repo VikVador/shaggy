@@ -56,6 +56,7 @@ def broadcast_to_levels(
     Returns:
         strides : One stride per level, each with one value per axis.
     """
+
     if isinstance(value, int) or all(isinstance(v, int) for v in value):
         return [broadcast_to_axes(value, spatial)] * levels
 
@@ -127,7 +128,6 @@ class ConvEncoder(nn.Module):
 
         kwargs = dict(kernel_size=kernel_size, periodic=periodic, reflect=reflect)
 
-        self.in_channels = in_channels
         self.scale = tuple(p * math.prod(s[a] for s in strides) for a, p in enumerate(patch_size))
 
         # The pointwise convolution mixes the input channels at full resolution, e.g. fields with
@@ -222,6 +222,7 @@ class ConvEncoder(nn.Module):
         Returns:
             y : Output tensor (B, C_o, L_1 / scale_1, ..., L_N / scale_N).
         """
+
         x = self.descent(self.in_proj(self.patch(self.mix(x))), mod)
         x = self.out_proj(self.out_norm(x, mod))
 
@@ -395,7 +396,7 @@ class ConvAE(AutoEncoder):
 
         # The encoder divides each spatial dimension by its own scale
         return (
-            self.encoder.out_proj.out_channels,
+            self.encoder.out_proj.conv.out_channels,
             *(length // scale for length, scale in zip(resolution, self.encoder.scale)),
         )
 

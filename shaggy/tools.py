@@ -43,6 +43,7 @@ def load_config(path: Union[str, Path]) -> DictConfig:
     Returns:
         config : Configuration of model.
     """
+
     return OmegaConf.load(Path(path) / "config.yml")
 
 
@@ -85,4 +86,5 @@ def load(
     Returns:
         model : The reconstructed model, with the saved weights, on device and in eval mode.
     """
+
     return load_weights(model_cls(**load_config(path)), path, device=device)

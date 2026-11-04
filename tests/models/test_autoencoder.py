@@ -26,7 +26,7 @@ def test_cae(
     hid_channels: list,
     latent_channels: int,
 ) -> None:
-    r"""Checks forward shapes, gradient flow, and a save/load roundtrip for ConvAE."""
+    r"""Determines if a ConvAE has the right shapes, finite gradients and survives a save/load."""
     config = dict(
         in_channels=in_channels,
         out_channels=in_channels,
@@ -68,8 +68,12 @@ def test_cae(
 
     z_copy, x_reconstructed_copy = autoencoder_copy(x)
 
-    assert torch.allclose(z, z_copy)
-    assert torch.allclose(x_reconstructed, x_reconstructed_copy)
+    for p, p_copy in zip(autoencoder.parameters(), autoencoder_copy.parameters()):
+        assert torch.equal(p, p_copy)
+
+    # Two instances may run different convolution kernels, equal up to float32 rounding
+    assert torch.allclose(z, z_copy, atol=1e-5)
+    assert torch.allclose(x_reconstructed, x_reconstructed_copy, atol=1e-5)
 
 
 def test_cae_compression() -> None:
@@ -113,7 +117,7 @@ def test_cae_asymmetric() -> None:
 
 
 def test_cae_asymmetric_rejects_mismatched_scales() -> None:
-    r"""A decoder that does not undo the encoder's downsampling is rejected at build time."""
+    r"""Determines if a decoder that does not undo the encoder's downsampling is rejected."""
     with pytest.raises(AssertionError, match="downsamples"):
         create_ConvAE(
             in_channels=3,
@@ -361,7 +365,7 @@ def test_encoder_mixing_projects_the_channels(spatial: int) -> None:
     x = torch.randn(2, 6, *[8] * spatial)
 
     assert encoder.mix.weight.shape[:2] == (2, 6)
-    assert encoder.in_proj.in_channels == 2
+    assert encoder.in_proj.conv.in_channels == 2
     assert encoder(x).shape == (2, 4, *[4] * spatial)
     assert torch.allclose(encoder.mix.weight.flatten(1), torch.eye(2, 6), atol=1e-2)
 

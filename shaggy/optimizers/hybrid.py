@@ -7,10 +7,7 @@ __all__ = [
 import torch
 
 from torch import nn
-from typing import (
-    Any,
-    Optional,
-)
+from typing import Any, Optional
 
 from .muon import Muon
 
@@ -81,6 +78,7 @@ class HybridMA:
         Arguments:
             set_to_none : If True, sets gradients to None instead of zero.
         """
+
         if self.opt_muon is not None:
             self.opt_muon.zero_grad(set_to_none=set_to_none)
         if self.opt_adamw is not None:
@@ -92,6 +90,7 @@ class HybridMA:
         Returns:
             state : A dict with keys for "muon" and "adamw" optimizers.
         """
+
         return {
             "muon": self.opt_muon.state_dict() if self.opt_muon is not None else None,
             "adamw": self.opt_adamw.state_dict() if self.opt_adamw is not None else None,
@@ -103,6 +102,7 @@ class HybridMA:
         Arguments:
             state_dict : A dict as returned by state_dict(), with keys "muon" and "adamw".
         """
+
         if self.opt_muon is not None:
             self.opt_muon.load_state_dict(state_dict["muon"])
         if self.opt_adamw is not None:

@@ -15,11 +15,11 @@ def relative_deviation(y: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
     r"""Computes the RMS of y - x relative to the RMS of x.
 
     Arguments:
-        y: Output tensor.
-        x: Reference tensor, same shape as y.
+        y : Output tensor.
+        x : Reference tensor, same shape as y.
 
     Returns:
-        deviation: Scalar relative deviation.
+        deviation : Scalar relative deviation.
     """
 
     return (y - x).pow(2).mean().sqrt() / x.pow(2).mean().sqrt()
@@ -33,7 +33,7 @@ def test_boundaryconv_matches_a_plain_convolution(spatial: int) -> None:
     r"""Determines if zero padding on every axis matches a plain convolution with the same weights."""
     conv = BoundaryConv(4, 6, spatial=spatial, kernel_size=3)
     plain = getattr(nn, f"Conv{spatial}d")(4, 6, kernel_size=3, padding=1)
-    plain.load_state_dict(conv.state_dict())
+    plain.load_state_dict(conv.conv.state_dict())
     x = torch.randn(2, 4, *[8] * spatial)
 
     assert torch.allclose(conv(x), plain(x), atol=1e-6)
@@ -48,7 +48,7 @@ def test_boundaryconv_matches_a_padded_convolution(
     r"""Determines if padding every axis periodically or by reflection matches PyTorch's padding modes."""
     conv = BoundaryConv(4, 6, spatial=2, kernel_size=(3, 5), periodic=periodic, reflect=reflect)
     plain = nn.Conv2d(4, 6, kernel_size=(3, 5), padding=(1, 2), padding_mode=mode)
-    plain.load_state_dict(conv.state_dict())
+    plain.load_state_dict(conv.conv.state_dict())
     x = torch.randn(2, 4, 8, 12)
 
     assert torch.allclose(conv(x), plain(x), atol=1e-6)
@@ -199,8 +199,8 @@ def test_residualblock_skip_connection() -> None:
     r"""Determines if the block reduces exactly to the identity once its FFN is silenced."""
     block = ResidualBlock(8, spatial=2, **CONV)
 
-    block.ffn[-1].weight.data.zero_()
-    block.ffn[-1].bias.data.zero_()
+    block.ffn[-1].conv.weight.data.zero_()
+    block.ffn[-1].conv.bias.data.zero_()
 
     x = torch.randn(2, 8, 8, 8)
 
@@ -224,7 +224,7 @@ def test_residualblock_gradients(checkpointing: bool) -> None:
 def test_residualblock_checkpointing_is_transparent() -> None:
     r"""Determines if checkpointing leaves outputs and gradients unchanged, dropout included."""
     block = ResidualBlock(8, spatial=2, dropout=0.5, **CONV)
-    block.ffn[-1].weight.data.normal_()
+    block.ffn[-1].conv.weight.data.normal_()
 
     x = torch.randn(2, 8, 8, 8, requires_grad=True)
     results = []

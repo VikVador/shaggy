@@ -6,10 +6,7 @@ __all__ = [
 
 import torch
 
-from torch import (
-    Tensor,
-    nn,
-)
+from torch import Tensor, nn
 from typing import Optional
 
 
