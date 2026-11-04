@@ -77,7 +77,7 @@ def linkcode_resolve(domain: str, info: dict) -> str:
         return f"{repository}/blob/{commit}/{file}#L{start}-L{end}"
 
 
-# Shaggy names its returned values (e.g. "z: Latent code."), render them like arguments
+# Shaggy names its returned values (e.g. "z : Latent code."), render them like arguments
 napoleon_custom_sections = [("Returns", "params_style")]
 
 ## Settings

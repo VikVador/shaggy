@@ -9,8 +9,6 @@ This tutorial compares the optimizers of ``shaggy``, **SOAP** and **HybridMA** (
     import torch
     import torch.nn as nn
 
-    from IPython.display import clear_output
-
     from shaggy.loss import loss_reconstruction
     from shaggy.optimizers import SOAP, HybridMA, safe_gradient_step
 
@@ -37,9 +35,7 @@ All the parameters that influence the tutorial are grouped in the dictionaries b
             "weight_decay": 0.01,
             "steps": 2_000,
             "batch_size": 256,
-        },
-        "plot": {
-            "refresh_every": 50,
+            "validate_every": 50,
         },
     }
 
@@ -100,12 +96,12 @@ The model is a small multilayer perceptron (MLP). Each optimizer trains its own 
 Training
 --------
 
-All models see the exact same batches and minimize the mean squared error (MSE). The training loss (left) and the validation loss (right) are refreshed live.
+All models see the exact same batches and minimize the mean squared error (MSE). The training loss (left) and the validation loss (right) are drawn at the end.
 
 .. code-block:: python
 
     steps, batch_size = config["train"]["steps"], config["train"]["batch_size"]
-    refresh_every = config["plot"]["refresh_every"]
+    validate_every = config["train"]["validate_every"]
 
     train_loss = {name: [] for name in models}
     val_loss = {name: [] for name in models}
@@ -120,23 +116,22 @@ All models see the exact same batches and minimize the mean squared error (MSE).
             safe_gradient_step(optimizers[name])
             train_loss[name].append(loss.item())
 
-        if step % refresh_every == 0 or step == steps:
+        if step % validate_every == 0 or step == steps:
             with torch.no_grad():
                 for name, model in models.items():
                     prediction = model(temperature[val])
                     val_loss[name].append(loss_reconstruction(prediction, oxygen[val]).item())
             val_steps.append(step)
 
-            clear_output(wait=True)
-            fig, (ax_train, ax_val) = plt.subplots(1, 2, figsize=(10, 3.5))
-            for name in models:
-                ax_train.plot(range(1, step + 1), train_loss[name], label=name)
-                ax_val.plot(val_steps, val_loss[name], label=name)
-            for ax, title in [(ax_train, "Training"), (ax_val, "Validation")]:
-                ax.set(title=title, xlabel="Step", ylabel="MSE", xlim=(0, steps), yscale="log")
-                ax.legend()
-            plt.tight_layout()
-            plt.show()
+    fig, (ax_train, ax_val) = plt.subplots(1, 2, figsize=(10, 3.5))
+    for name in models:
+        ax_train.plot(range(1, steps + 1), train_loss[name], label=name)
+        ax_val.plot(val_steps, val_loss[name], label=name)
+    for ax, title in [(ax_train, "Training"), (ax_val, "Validation")]:
+        ax.set(title=title, xlabel="Step", ylabel="MSE", xlim=(0, steps), yscale="log")
+        ax.legend()
+    plt.tight_layout()
+    plt.show()
 
 .. image:: ../images/tutorials/optimizers-1.png
     :align: center

@@ -1,4 +1,4 @@
-.. image:: images/banner.svg
+.. image:: ../assets/banner.svg
 
 Shaggy
 ======
