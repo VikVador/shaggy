@@ -217,7 +217,7 @@ def test_cae_periodic_axis_is_equivariant_to_rolls(spatial: int) -> None:
 
 
 def test_cae_reflected_axis_keeps_shapes() -> None:
-    r"""Determines if a periodic longitude with a reflected latitude reconstructs the input shape."""
+    r"""Determines if a periodic axis next to a reflected axis reconstructs the input shape."""
     autoencoder = create_ConvAE(
         2, 2, 4, hid_channels=[8, 16], hid_blocks=[1, 1], periodic=(-1,), reflect=(0,)
     )
