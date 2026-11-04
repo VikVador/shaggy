@@ -1,8 +1,8 @@
 ![Shaggy's banner](assets/banner.svg)
 
-# Shaggy - Autoencoders in PyTorch
+# Shaggy - Distributed training in PyTorch
 
-Shaggy is a lightweight Python package that implements autoencoder models in [PyTorch](https://pytorch.org). It provides modular encoder-decoder architectures, losses tailored to latent representations, the [SOAP](https://arxiv.org/abs/2409.11321) and [Muon](https://kellerjordan.github.io/posts/muon/) optimizers, gradient-checkpointing utilities, and more. Basically everything needed to go from raw data to a trained latent representation, at scale, with minimal boilerplate.
+Shaggy is a lightweight Python package of tools to train deep learning models in [PyTorch](https://pytorch.org), at scale, on many GPUs. It provides distributed training utilities, losses, the [SOAP](https://arxiv.org/abs/2409.11321) and [Muon](https://kellerjordan.github.io/posts/muon/) optimizers, learning rate schedulers, gradient checkpointing, tools to stop and resume a training, and models that work either in the ambient space of the data or in a latent space. Autoencoders map one space to the other; transformers, coming next, will run in either, on the data itself or on the latent states of an autoencoder. Basically everything needed to go from raw data to a trained model, at scale, with minimal boilerplate.
 
 > In the [Scooby-Doo](https://wikipedia.org/wiki/Scooby-Doo) cartoon, [Shaggy](https://wikipedia.org/wiki/Shaggy_Rogers) is the always scared, always hungry best friend of a Great Dane 👻
 
@@ -16,7 +16,7 @@ pip install git+https://github.com/VikVador/shaggy
 
 ## Getting started
 
-Shaggy's autoencoders are the composition of an encoder and a decoder. The convolutional autoencoder works on 1D, 2D or 3D data, and can be asymmetric, with a light encoder and a heavy decoder.
+Shaggy's autoencoders are the composition of an encoder and a decoder, from the ambient space of the data to a latent space and back. The convolutional autoencoder works on 1D, 2D or 3D data, and can be asymmetric, with a light encoder and a heavy decoder.
 
 ```python
 from shaggy.loss import loss_reconstruction
@@ -55,6 +55,31 @@ from shaggy.tools import load, save
 save(autoencoder, config, "runs/cae")  # config: the arguments given to create_ConvAE
 
 autoencoder = load("runs/cae", create_ConvAE)
+```
+
+The same loop scales to many GPUs when launched with [`torchrun`](https://pytorch.org/docs/stable/elastic/run.html). Shaggy sets up the processes, schedules the learning rate, cycles over the data and saves the state of the training, so that a job can stop and resume.
+
+```python
+from pathlib import Path
+
+from shaggy.dataloader import infinite_dataloader
+from shaggy.distributed import reduce_mean, setup_distributed
+from shaggy.schedulers import warmup_cosine_decay
+from shaggy.training import save_state
+
+rank, local_rank, world_size, device, is_distributed = setup_distributed()
+
+scheduler = warmup_cosine_decay(
+    optimizer, lr_start=1e-5, lr_peak=1e-3, lr_end=1e-5, warmup_steps=1_000, total_steps=50_000
+)
+
+for step, x in enumerate(infinite_dataloader(train_loader, batches=50_000, is_distributed=is_distributed)):
+    ...  # forward, backward and safe_gradient_step, as above
+    scheduler.step()
+
+    if step % 1_000 == 0:
+        mean_loss = reduce_mean(loss.item(), device)  # averaged over every process
+        save_state(Path("runs/cae/state.pt"), {"model": autoencoder.state_dict(), "step": step})
 ```
 
 For more information, check out the documentation at [shaggy.readthedocs.io](https://shaggy.readthedocs.io).

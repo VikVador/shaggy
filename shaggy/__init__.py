@@ -1,4 +1,4 @@
-r"""Shaggy - Autoencoders in PyTorch"""
+r"""Shaggy - Distributed training in PyTorch"""
 
 __version__ = "0.0.1"
 
